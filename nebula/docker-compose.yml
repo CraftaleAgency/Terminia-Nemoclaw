@@ -111,6 +111,47 @@ services:
             - llmserver-ai-network
             - dokploy-network
 
+    # OCR - NuMarkdown-8B-Thinking (document OCR, vision-language)
+    llama-server-ocr:
+        image: local/llama-server:latest
+        container_name: llama-server-ocr
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: ${OCR_MEMORY_LIMIT:-10G}
+        ports:
+            - "${OCR_PORT:-8086}:8080"
+        volumes:
+            - /home/ppezz/models/numarkdown:/models:ro
+        command:
+            - --model
+            - /models/NuMarkdown-8B-Thinking.Q4_K_M.gguf
+            - --mmproj
+            - /models/NuMarkdown-8B-Thinking.mmproj-Q8_0.gguf
+            - --ctx-size
+            - "${OCR_CTX_SIZE:-4096}"
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+            - -t
+            - "${OCR_THREADS:-8}"
+            - --jinja
+            - --n-gpu-layers
+            - "99"
+            - --parallel
+            - "2"
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 60s
+        networks:
+            - llmserver-ai-network
+            - dokploy-network
+
     # LiteLLM Proxy - OpenAI-compatible API gateway
     litellm-proxy:
         image: ghcr.io/berriai/litellm:main-latest
