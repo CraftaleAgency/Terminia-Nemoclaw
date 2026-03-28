@@ -24,6 +24,8 @@ services:
             - -t
             - "${ORCHESTRATOR_THREADS:-24}"
             - --jinja
+            - --reasoning-budget
+            - "${ORCHESTRATOR_REASONING_BUDGET:-1024}"
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
             interval: 30s
@@ -60,6 +62,8 @@ services:
             - -t
             - "${WORKER_THREADS:-16}"
             - --jinja
+            - --reasoning-budget
+            - "${WORKER_REASONING_BUDGET:-512}"
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
             interval: 30s
