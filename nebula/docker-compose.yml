@@ -82,7 +82,7 @@ services:
         deploy:
             resources:
                 limits:
-                    memory: ${VISION_MEMORY_LIMIT:-12G}
+                    memory: ${VISION_MEMORY_LIMIT:-16G}
         ports:
             - "${VISION_PORT:-8085}:8080"
         volumes:
@@ -93,13 +93,13 @@ services:
             - --mmproj
             - /models/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16-mmproj.gguf
             - --ctx-size
-            - "${VISION_CTX_SIZE:-8192}"
+            - "${VISION_CTX_SIZE:-4096}"
             - --host
             - "0.0.0.0"
             - --port
             - "8080"
             - -t
-            - "${VISION_THREADS:-16}"
+            - "${VISION_THREADS:-8}"
             - --jinja
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
