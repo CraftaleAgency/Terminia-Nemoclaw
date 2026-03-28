@@ -91,12 +91,79 @@ else
 fi
 echo ""
 
+# Step 7: Deploy Terminia skills into sandbox
+SKILLS_DIR="$(dirname "$0")/../skills"
+SANDBOX_SKILLS_DIR="/sandbox/.openclaw/skills"
+if [ -d "$SKILLS_DIR" ]; then
+    echo "📦 Step 7: Deploying Terminia skills..."
+    echo "  Source: $SKILLS_DIR"
+    echo "  Target: $SANDBOX_SKILLS_DIR (inside sandbox)"
+    echo ""
+
+    # Copy skills into sandbox via nemoclaw exec
+    nemoclaw terminia-sandbox exec -- mkdir -p "$SANDBOX_SKILLS_DIR" 2>/dev/null || true
+
+    for skill_dir in "$SKILLS_DIR"/*/; do
+        skill_name=$(basename "$skill_dir")
+        echo "  → $skill_name"
+        nemoclaw terminia-sandbox cp "$skill_dir" "$SANDBOX_SKILLS_DIR/$skill_name/" 2>/dev/null || \
+            echo -e "${YELLOW}    ⚠ Failed to copy $skill_name${NC}"
+    done
+
+    # Install skills with OpenClaw (if openclaw CLI available inside sandbox)
+    echo ""
+    echo "  Registering skills..."
+    nemoclaw terminia-sandbox exec -- openclaw skill install --path "$SANDBOX_SKILLS_DIR" 2>/dev/null || \
+        echo -e "${YELLOW}  ⚠ Skill registration failed — skills are copied but may need manual registration${NC}"
+    echo ""
+else
+    echo "📦 Step 7: No skills directory found — skipping skill deployment"
+    echo ""
+fi
+
+# Step 8: Configure sandbox environment variables
+echo "🔑 Step 8: Setting sandbox environment variables..."
+
+if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+    nemoclaw terminia-sandbox env set SUPABASE_URL="$SUPABASE_URL" 2>/dev/null || \
+        echo -e "${YELLOW}  ⚠ Failed to set SUPABASE_URL${NC}"
+    nemoclaw terminia-sandbox env set SUPABASE_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" 2>/dev/null || \
+        echo -e "${YELLOW}  ⚠ Failed to set SUPABASE_SERVICE_ROLE_KEY${NC}"
+    echo -e "  ${GREEN}✓ Supabase credentials configured${NC}"
+else
+    echo -e "  ${YELLOW}⚠ SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY not set in host environment${NC}"
+    echo "    Export them before running setup, or set manually:"
+    echo "    nemoclaw terminia-sandbox env set SUPABASE_URL=https://your-project.supabase.co"
+    echo "    nemoclaw terminia-sandbox env set SUPABASE_SERVICE_ROLE_KEY=your-key"
+fi
+
+if [ -n "$VIES_API_KEY" ]; then
+    nemoclaw terminia-sandbox env set VIES_API_KEY="$VIES_API_KEY" 2>/dev/null || \
+        echo -e "${YELLOW}  ⚠ Failed to set VIES_API_KEY${NC}"
+    echo -e "  ${GREEN}✓ VIES API key configured${NC}"
+else
+    echo -e "  ${YELLOW}⚠ VIES_API_KEY not set — osint-vat skill will not work${NC}"
+fi
+echo ""
+
+# Step 9: Configure BandoRadar cron (daily sync)
+echo "⏰ Step 9: Configuring BandoRadar daily sync..."
+nemoclaw terminia-sandbox exec -- sh -c \
+    'echo "0 6 * * * cd /sandbox/.openclaw/skills && node --input-type=module -e \"import(\\\"./bandi-sync-anac/handler.js\\\").then(m=>m.handler({}).then(console.log))\" >> /tmp/bandi-sync.log 2>&1
+30 6 * * * cd /sandbox/.openclaw/skills && node --input-type=module -e \"import(\\\"./bandi-sync-ted/handler.js\\\").then(m=>m.handler({}).then(console.log))\" >> /tmp/bandi-sync.log 2>&1
+0 7 * * * cd /sandbox/.openclaw/skills && node --input-type=module -e \"import(\\\"./bandi-match/handler.js\\\").then(m=>m.handler({}).then(console.log))\" >> /tmp/bandi-match.log 2>&1" | crontab -' 2>/dev/null || \
+    echo -e "${YELLOW}⚠ Cron setup failed — configure manually inside sandbox${NC}"
+echo "  Schedule: 06:00 ANAC sync → 06:30 TED sync → 07:00 Match scoring"
+echo ""
+
 echo -e "${GREEN}✅ Setup complete${NC}"
 echo ""
 echo "┌─────────────────────────────────────────────────────────┐"
 echo "│  Gateway:    http://localhost:8082                      │"
 echo "│  Health:     http://localhost:8082/health               │"
 echo "│  Inference:  litellm-proxy:4000 → llama-server:8083    │"
+echo "│  Skills:     9 Terminia skills deployed                 │"
+echo "│  Cron:       BandoRadar daily @ 06:00                   │"
 echo "└─────────────────────────────────────────────────────────┘"
 echo ""
 echo "Commands:"

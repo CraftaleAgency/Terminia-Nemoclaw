@@ -79,3 +79,50 @@ network:
       - /usr/local/bin/npm
     rules:
       - methods: ["GET"]
+
+  # Supabase — backend database access (service role)
+  - name: supabase
+    endpoints:
+      - "*.supabase.co:443"
+    binaries:
+      - /usr/local/bin/node
+      - /usr/local/bin/openclaw
+    rules:
+      - methods: ["ALL"]
+
+  # VIES — EU VAT number validation
+  - name: vies_api
+    endpoints:
+      - ec.europa.eu:443
+    binaries:
+      - /usr/local/bin/node
+    rules:
+      - methods: ["GET", "POST"]
+
+  # ANAC OpenData — Italian public procurement datasets
+  - name: anac_opendata
+    endpoints:
+      - dati.anticorruzione.it:443
+    binaries:
+      - /usr/local/bin/node
+    rules:
+      - methods: ["GET"]
+
+  # ANAC Casellario — supplier annotation checks
+  - name: anac_casellario
+    endpoints:
+      - casellario.anticorruzione.it:443
+    binaries:
+      - /usr/local/bin/node
+    rules:
+      - methods: ["GET", "POST"]
+
+  # TED Europa — EU public procurement notices
+  - name: ted_europa
+    endpoints:
+      - ted.europa.eu:443
+      - api.ted.europa.eu:443
+    binaries:
+      - /usr/local/bin/node
+    rules:
+      - methods: ["GET"]
