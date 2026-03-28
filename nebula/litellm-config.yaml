@@ -34,23 +34,6 @@ model_list:
     model_info:
       supports_vision: false
 
-  # Vision - NVIDIA Nemotron-Nano-12B-v2-VL (image + text)
-  - model_name: nemotron-vision
-    litellm_params:
-      model: openai/nemotron-nano-12b-vl
-      api_base: http://llama-server-vision:8080/v1
-      api_key: dummy
-    model_info:
-      supports_vision: true
-
-  - model_name: vision
-    litellm_params:
-      model: openai/nemotron-nano-12b-vl
-      api_base: http://llama-server-vision:8080/v1
-      api_key: dummy
-    model_info:
-      supports_vision: true
-
   # OCR - NuMarkdown-8B-Thinking (document OCR, vision-language)
   - model_name: numarkdown
     litellm_params:
