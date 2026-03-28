@@ -7,6 +7,7 @@ services:
         container_name: openshell-gateway
         restart: unless-stopped
         privileged: true
+        cgroupns: host
         pid: host
         entrypoint: ["/entrypoint-wrapper.sh"]
         command: ["server"]
@@ -26,11 +27,11 @@ services:
             - llmserver-ai-network
             - dokploy-network
         healthcheck:
-            test: ["CMD", "wget", "--spider", "-q", "http://localhost:${OPENSHELL_PORT:-30051}/health"]
+            test: ["CMD-SHELL", "pgrep -x k3s || exit 1"]
             interval: 30s
             timeout: 10s
-            retries: 3
-            start_period: 60s
+            retries: 5
+            start_period: 120s
 
     terminia-api:
         build:
@@ -47,13 +48,14 @@ services:
             - LITELLM_URL=http://litellm-proxy:4000
             - LITELLM_API_KEY=${LITELLM_API_KEY:-}
             - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,https://terminia.pezserv.org}
+            - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
             - NODE_ENV=production
         networks:
             - llmserver-ai-network
             - dokploy-network
         depends_on:
             openshell-gateway:
-                condition: service_healthy
+                condition: service_started
 
 networks:
     llmserver-ai-network:
