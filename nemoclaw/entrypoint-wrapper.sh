@@ -29,11 +29,20 @@ chmod +x /bin/k3s
 # Restore the real k3s binary
 mv /bin/k3s.real /bin/k3s
 
-# Detect cgroup version (same logic as original entrypoint)
-EXTRA_KUBELET_ARGS=""
+# Detect cgroup version and configure kubelet compatibility flags.
+# On cgroup v2, kubelet tries to create /sys/fs/cgroup/kubepods with domain
+# controllers delegated. When running inside a Docker container, the cgroup
+# controllers may already be delegated to the container's cgroup, making it
+# impossible for kubelet to create the kubepods subtree. This causes:
+#   "cannot enter cgroupv2 /sys/fs/cgroup/kubepods with domain controllers
+#    -- it is in an invalid state"
+# Setting cgroups-per-qos=false prevents kubelet from managing QoS cgroups.
+EXTRA_KUBELET_ARGS="--kubelet-arg=cgroups-per-qos=false"
 if [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
     echo "Detected cgroup v1 -- adding kubelet compatibility flag (fail-cgroupv1=false)"
-    EXTRA_KUBELET_ARGS="--kubelet-arg=fail-cgroupv1=false"
+    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=fail-cgroupv1=false"
+else
+    echo "Detected cgroup v2 -- disabling cgroups-per-qos to avoid kubepods delegation issue"
 fi
 
 # Wait for default route (same logic as original entrypoint)

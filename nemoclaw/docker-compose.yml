@@ -26,7 +26,7 @@ services:
             - llmserver-ai-network
             - dokploy-network
         healthcheck:
-            test: ["CMD", "curl", "-f", "http://localhost:${OPENSHELL_PORT:-30051}/health"]
+            test: ["CMD", "wget", "--spider", "-q", "http://localhost:${OPENSHELL_PORT:-30051}/health"]
             interval: 30s
             timeout: 10s
             retries: 3
