@@ -37,7 +37,7 @@ mv /bin/k3s.real /bin/k3s
 #   "cannot enter cgroupv2 /sys/fs/cgroup/kubepods with domain controllers
 #    -- it is in an invalid state"
 # Setting cgroups-per-qos=false prevents kubelet from managing QoS cgroups.
-EXTRA_KUBELET_ARGS="--kubelet-arg=cgroups-per-qos=false"
+EXTRA_KUBELET_ARGS="--kubelet-arg=cgroups-per-qos=false --kubelet-arg=enforce-node-allocatable="
 if [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
     echo "Detected cgroup v1 -- adding kubelet compatibility flag (fail-cgroupv1=false)"
     EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=fail-cgroupv1=false"

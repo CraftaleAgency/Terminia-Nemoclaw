@@ -1,10 +1,8 @@
-/** @typedef {import('../types.js').ChatRequest} ChatRequest */
-/** @typedef {import('../types.js').ChatResponse} ChatResponse */
-/** @typedef {import('../types.js').ChatStreamChunk} ChatStreamChunk */
-
+import type { Request, Response } from 'express'
+import type { ChatRequest, ChatResponse } from '../types.ts'
 import { Router } from 'express'
-import supabase from '../lib/supabase.js'
-import { chatCompletion, chatCompletionStream } from '../lib/inference.js'
+import supabase from '../lib/supabase.ts'
+import { chatCompletion, chatCompletionStream } from '../lib/inference.ts'
 
 const router = Router()
 
@@ -25,12 +23,7 @@ Regole:
 - Non inventare dati o numeri
 - Usa formato markdown per strutturare le risposte`
 
-/**
- * Chat with Terminia AI assistant (supports SSE streaming).
- * @param {import('express').Request<{}, ChatResponse, ChatRequest>} req
- * @param {import('express').Response<ChatResponse>} res
- */
-router.post('/', async (req, res) => {
+router.post('/', async (req: Request<object, ChatResponse, ChatRequest>, res: Response) => {
   const { messages, company_id, stream } = req.body
 
   if (!messages?.length) {
@@ -56,7 +49,7 @@ router.post('/', async (req, res) => {
   }
 
   const fullMessages = [
-    { role: 'system', content: SYSTEM_PROMPT + contextNote },
+    { role: 'system' as const, content: SYSTEM_PROMPT + contextNote },
     ...messages,
   ]
 
@@ -66,7 +59,7 @@ router.post('/', async (req, res) => {
       const content = await chatCompletion({ messages: fullMessages })
       return res.json({ content })
     } catch (err) {
-      return res.status(502).json({ error: err.message })
+      return res.status(502).json({ error: (err as Error).message })
     }
   }
 
@@ -83,7 +76,7 @@ router.post('/', async (req, res) => {
     }
     res.write('data: [DONE]\n\n')
   } catch (err) {
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
+    res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`)
   }
 
   res.end()

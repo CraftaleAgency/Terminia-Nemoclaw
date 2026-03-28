@@ -1,12 +1,12 @@
-#!/usr/bin/env node
-import { supabase } from '../../_shared/supabase-client.js';
+#!/usr/bin/env -S node --experimental-strip-types
+import { supabase } from '../../_shared/supabase-client.ts'
 import {
   computeMatchScore,
   callInference,
   parseInferenceJSON,
   isoNow,
   clamp,
-} from '../../_shared/utils.js';
+} from '../../_shared/utils.ts'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -19,7 +19,7 @@ const SECTOR_SYSTEM_PROMPT =
   'Valuta la corrispondenza settoriale. Rispondi SOLO con un JSON: ' +
   '{ "score": 0-35, "match_type": "exact|related|adjacent|none", "reasoning": "breve spiegazione" }';
 
-const REGION_TO_NUTS = {
+const REGION_TO_NUTS: Record<string, string> = {
   'lombardia':              'ITC4',
   'piemonte':               'ITC1',
   'veneto':                 'ITH3',
@@ -43,7 +43,7 @@ const REGION_TO_NUTS = {
 };
 
 // NUTS macro-area prefixes that are considered "adjacent"
-const ADJACENT_NUTS = {
+const ADJACENT_NUTS: Record<string, string[]> = {
   ITC: ['ITH', 'ITI'],          // Northwest ↔ Northeast, Central
   ITH: ['ITC', 'ITI'],          // Northeast ↔ Northwest, Central
   ITI: ['ITC', 'ITH', 'ITF'],   // Central ↔ Northwest, Northeast, South
@@ -52,10 +52,79 @@ const ADJACENT_NUTS = {
 };
 
 // ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+interface HandlerInput {
+  company_id?: string
+}
+
+interface ContractInfo {
+  contract_type: string | null
+  counterpart_type: string | null
+}
+
+interface Certification {
+  name?: string
+  [key: string]: unknown
+}
+
+interface CompanyProfile {
+  company_id: string
+  ateco_code: string | null
+  city: string | null
+  region: string | null
+  revenue: number | null
+  employee_count: number | null
+  certifications: Array<string | Certification>
+  sector_description: string | null
+  updated_at: string | null
+  contracts: ContractInfo[]
+}
+
+interface BandoRow {
+  id: string
+  title?: string
+  description?: string
+  cpv_codes?: string[]
+  base_value?: number | null
+  nuts_code?: string
+  raw_data?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+interface SectorResult {
+  score: number
+  matchType: string
+  reasoning: string
+}
+
+interface SectorInferenceResult {
+  score?: number
+  match_type?: string
+  reasoning?: string
+}
+
+interface DimensionScores {
+  sector: number
+  size: number
+  geo: number
+  requirements: number
+  feasibility: number
+}
+
+interface HandlerResult {
+  matched: number
+  alerts_created: number
+  errors: number
+  detail?: string
+}
+
+// ---------------------------------------------------------------------------
 // Step 1 — Load company profiles
 // ---------------------------------------------------------------------------
 
-async function loadCompanyProfiles(companyId) {
+async function loadCompanyProfiles(companyId?: string): Promise<CompanyProfile[]> {
   let query = supabase
     .from('companies')
     .select('id, ateco_code, city, region, revenue, employee_count, certifications, sector_description, updated_at')
@@ -69,26 +138,26 @@ async function loadCompanyProfiles(companyId) {
   if (error) throw new Error(`Failed to load companies: ${error.message}`);
   if (!data?.length) return [];
 
-  const profiles = [];
-  for (const company of data) {
+  const profiles: CompanyProfile[] = [];
+  for (const company of data as Array<Record<string, unknown>>) {
     const { data: contracts } = await supabase
       .from('contracts')
       .select('contract_type, counterpart_type')
-      .eq('company_id', company.id)
+      .eq('company_id', company.id as string)
       .neq('status', 'draft')
       .limit(20);
 
     profiles.push({
-      company_id: company.id,
-      ateco_code: company.ateco_code,
-      city: company.city,
-      region: company.region,
-      revenue: company.revenue,
-      employee_count: company.employee_count,
-      certifications: company.certifications || [],
-      sector_description: company.sector_description,
-      updated_at: company.updated_at,
-      contracts: contracts || [],
+      company_id: company.id as string,
+      ateco_code: (company.ateco_code as string | null) ?? null,
+      city: (company.city as string | null) ?? null,
+      region: (company.region as string | null) ?? null,
+      revenue: (company.revenue as number | null) ?? null,
+      employee_count: (company.employee_count as number | null) ?? null,
+      certifications: (company.certifications as Array<string | Certification>) || [],
+      sector_description: (company.sector_description as string | null) ?? null,
+      updated_at: (company.updated_at as string | null) ?? null,
+      contracts: (contracts || []) as ContractInfo[],
     });
   }
 
@@ -99,7 +168,7 @@ async function loadCompanyProfiles(companyId) {
 // Step 2 — Load unscored bandi
 // ---------------------------------------------------------------------------
 
-async function loadUnscoredBandi(companyUpdatedAt) {
+async function loadUnscoredBandi(companyUpdatedAt: string | null): Promise<BandoRow[]> {
   let query = supabase
     .from('bandi')
     .select('*')
@@ -115,7 +184,7 @@ async function loadUnscoredBandi(companyUpdatedAt) {
 
   const { data, error } = await query;
   if (error) throw new Error(`Failed to load bandi: ${error.message}`);
-  return data || [];
+  return (data || []) as BandoRow[];
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +192,7 @@ async function loadUnscoredBandi(companyUpdatedAt) {
 // ---------------------------------------------------------------------------
 
 // 3a. Sector (0-35) — AI inference with heuristic fallback
-async function scoreSector(bando, profile) {
+async function scoreSector(bando: BandoRow, profile: CompanyProfile): Promise<SectorResult> {
   const cpvCodes = (bando.cpv_codes || []).join(', ') || 'N/D';
   const atecoCode = profile.ateco_code || 'N/D';
   const descSnippet = `${bando.title || ''} ${bando.description || ''}`.slice(0, 500);
@@ -137,9 +206,9 @@ async function scoreSector(bando, profile) {
   try {
     const raw = await Promise.race([
       callInference(SECTOR_SYSTEM_PROMPT, userMessage, { model: 'nemotron-nano', temperature: 0.1, maxTokens: 512 }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), INFERENCE_TIMEOUT_MS)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), INFERENCE_TIMEOUT_MS)),
     ]);
-    const parsed = parseInferenceJSON(raw);
+    const parsed = parseInferenceJSON(raw) as SectorInferenceResult;
     return {
       score: clamp(parsed.score ?? 0, 0, 35),
       matchType: parsed.match_type || 'none',
@@ -151,7 +220,7 @@ async function scoreSector(bando, profile) {
   }
 }
 
-function sectorHeuristic(cpvCodes, atecoCode) {
+function sectorHeuristic(cpvCodes: string[] | undefined, atecoCode: string | null): SectorResult {
   if (!cpvCodes?.length || !atecoCode) {
     return { score: 10, matchType: 'none', reasoning: 'Dati insufficienti (fallback euristico)' };
   }
@@ -167,7 +236,7 @@ function sectorHeuristic(cpvCodes, atecoCode) {
 }
 
 // 3b. Economic Size (0-25)
-function scoreSize(bando, profile) {
+function scoreSize(bando: BandoRow, profile: CompanyProfile): number {
   if (!bando.base_value || !profile.revenue) return 15;
   const ratio = profile.revenue / bando.base_value;
   if (ratio >= 1.0) return 25;
@@ -177,7 +246,7 @@ function scoreSize(bando, profile) {
 }
 
 // 3c. Geography (0-20)
-function scoreGeo(bando, profile) {
+function scoreGeo(bando: BandoRow, profile: CompanyProfile): number {
   const nutsCode = bando.nuts_code;
   if (!nutsCode || nutsCode === 'IT') return 20; // national scope
 
@@ -189,7 +258,7 @@ function scoreGeo(bando, profile) {
   return 0;
 }
 
-function isAdjacentRegion(bandoNuts, companyNuts) {
+function isAdjacentRegion(bandoNuts: string, companyNuts: string): boolean {
   const bandoMacro = bandoNuts.slice(0, 3);
   const companyMacro = companyNuts.slice(0, 3);
   const adjacent = ADJACENT_NUTS[companyMacro];
@@ -197,19 +266,19 @@ function isAdjacentRegion(bandoNuts, companyNuts) {
 }
 
 // 3d. Requirements (0-15)
-function scoreRequirements(bando, profile) {
+function scoreRequirements(bando: BandoRow, profile: CompanyProfile): number {
   const certs = profile.certifications || [];
   const rawData = bando.raw_data || {};
 
   const requirementText = JSON.stringify(rawData).toLowerCase();
   if (!requirementText || requirementText.length < 10) return 5;
 
-  const certKeywords = ['iso 9001', 'iso 14001', 'iso 27001', 'soa', 'haccp', 'ohsas', 'iso 45001'];
+  const certKeywords: string[] = ['iso 9001', 'iso 14001', 'iso 27001', 'soa', 'haccp', 'ohsas', 'iso 45001'];
   const mentionedCerts = certKeywords.filter((kw) => requirementText.includes(kw));
 
   if (!mentionedCerts.length) return 5; // no specific certs mentioned
 
-  const companyCertsLower = certs.map((c) => (typeof c === 'string' ? c : c.name || '').toLowerCase());
+  const companyCertsLower = certs.map((c) => (typeof c === 'string' ? c : (c as Certification).name || '').toLowerCase());
   const matchedCount = mentionedCerts.filter((kw) =>
     companyCertsLower.some((cc) => cc.includes(kw)),
   ).length;
@@ -220,7 +289,7 @@ function scoreRequirements(bando, profile) {
 }
 
 // 3e. Feasibility (0-5)
-function scoreFeasibility(bando) {
+function scoreFeasibility(bando: BandoRow): number {
   const text = `${bando.title || ''} ${bando.description || ''} ${JSON.stringify(bando.raw_data || {})}`.toLowerCase();
   const rtiMandatory = text.includes('rti obbligatorio') || text.includes('raggruppamento obbligatorio');
   const rtiMentioned =
@@ -237,10 +306,15 @@ function scoreFeasibility(bando) {
 // Step 4 — Write results
 // ---------------------------------------------------------------------------
 
-async function writeBandoScore(bando, profile, scores, sectorResult) {
+interface WriteResult {
+  totalScore: number
+  alertCreated: boolean
+}
+
+async function writeBandoScore(bando: BandoRow, profile: CompanyProfile, scores: DimensionScores, sectorResult: SectorResult): Promise<WriteResult> {
   const totalScore = computeMatchScore(scores);
 
-  const snapshot = {
+  const snapshot: Record<string, unknown> = {
     company_id: profile.company_id,
     ateco_code: profile.ateco_code,
     region: profile.region,
@@ -249,7 +323,7 @@ async function writeBandoScore(bando, profile, scores, sectorResult) {
     scored_at: isoNow(),
   };
 
-  const updatePayload = {
+  const updatePayload: Record<string, unknown> = {
     match_score: totalScore,
     score_sector: scores.sector,
     score_size: scores.size,
@@ -275,7 +349,7 @@ async function writeBandoScore(bando, profile, scores, sectorResult) {
   return { totalScore, alertCreated };
 }
 
-async function createAlert(bando, profile, score, reasoning) {
+async function createAlert(bando: BandoRow, profile: CompanyProfile, score: number, reasoning: string): Promise<boolean> {
   const truncatedTitle = (bando.title || 'Bando senza titolo').slice(0, 80);
   const message = `Match ${score}%: ${reasoning || 'Alta compatibilità con il profilo aziendale.'}`;
 
@@ -309,12 +383,9 @@ async function createAlert(bando, profile, score, reasoning) {
 
 /**
  * Match active bandi against company profiles using 5-dimension scoring.
- *
- * @param {{ company_id?: string }} input
- * @returns {Promise<{ matched: number, alerts_created: number, errors: number }>}
  */
-async function handler(input = {}) {
-  const result = { matched: 0, alerts_created: 0, errors: 0 };
+async function handler(input: HandlerInput = {}): Promise<HandlerResult> {
+  const result: HandlerResult = { matched: 0, alerts_created: 0, errors: 0 };
 
   // Step 1 — Load company profiles
   const profiles = await loadCompanyProfiles(input.company_id);
@@ -332,7 +403,7 @@ async function handler(input = {}) {
         // Step 3 — Compute 5-dimension scores
         const sectorResult = await scoreSector(bando, profile);
 
-        const scores = {
+        const scores: DimensionScores = {
           sector: sectorResult.score,
           size: scoreSize(bando, profile),
           geo: scoreGeo(bando, profile),
@@ -345,8 +416,8 @@ async function handler(input = {}) {
 
         result.matched += 1;
         if (alertCreated) result.alerts_created += 1;
-      } catch (err) {
-        console.warn(`[bandi-match] Error scoring bando ${bando.id} for company ${profile.company_id}:`, err.message);
+      } catch (err: unknown) {
+        console.warn(`[bandi-match] Error scoring bando ${bando.id} for company ${profile.company_id}:`, (err as Error).message);
         result.errors += 1;
       }
     }
@@ -372,18 +443,18 @@ async function handler(input = {}) {
 }
 
 // CLI entry point
-async function main() {
+async function main(): Promise<void> {
   try {
     let raw = '';
     for await (const chunk of process.stdin) {
       raw += chunk;
     }
-    const input = JSON.parse(raw);
+    const input: HandlerInput = JSON.parse(raw);
     const result = await handler(input);
     console.log(JSON.stringify(result));
     process.exit(0);
-  } catch (err) {
-    console.log(JSON.stringify({ error: err.message }));
+  } catch (err: unknown) {
+    console.log(JSON.stringify({ error: (err as Error).message }));
     process.exit(1);
   }
 }

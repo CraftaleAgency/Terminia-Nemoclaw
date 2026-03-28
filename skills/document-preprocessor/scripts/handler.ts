@@ -1,24 +1,54 @@
-#!/usr/bin/env node
-import { supabase } from '../../_shared/supabase-client.js';
-import { callInference, isoNow } from '../../_shared/utils.js';
+#!/usr/bin/env -S node --experimental-strip-types
+import { supabase } from '../../_shared/supabase-client.ts'
+import { callInference, isoNow } from '../../_shared/utils.ts'
 
 // ---- Constants ----
 const MAX_TEXT_LENGTH = 50000;
 const MIN_PDF_TEXT_DENSITY = 100; // chars per page — below this, treat as scanned
 const OCR_MODEL = 'ocr'; // routes to NuMarkdown via LiteLLM
 
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+interface HandlerInput {
+  document_id?: string
+  storage_path?: string
+  content_type?: string
+  raw_content?: string
+  company_id?: string
+}
+
+interface PdfExtraction {
+  text: string
+  pages: number
+}
+
+interface DocxExtraction {
+  text: string
+  pages: number
+}
+
+interface HandlerResult {
+  document_id: string | null
+  text: string
+  method: string
+  pages: number
+  confidence: number
+  language: string
+}
+
 // ---- PDF text extraction (basic, no external deps) ----
-function extractTextFromPdfBuffer(buffer) {
+function extractTextFromPdfBuffer(buffer: Buffer): PdfExtraction {
   // Simple PDF text extraction - finds text between BT/ET operators
   // and decodes common PDF string formats.
-  // Returns { text, pages }
   const content = buffer.toString('latin1');
 
   // Count pages
   const pageCount = (content.match(/\/Type\s*\/Page[^s]/g) || []).length;
 
   // Extract text streams - look for text between parentheses in BT/ET blocks
-  const textParts = [];
+  const textParts: string[] = [];
   const btBlocks = content.match(/BT[\s\S]*?ET/g) || [];
   for (const block of btBlocks) {
     // Match text in parentheses: (text) Tj or (text) TJ
@@ -39,7 +69,7 @@ function extractTextFromPdfBuffer(buffer) {
 }
 
 // ---- DOCX text extraction ----
-async function extractTextFromDocxBuffer(buffer) {
+async function extractTextFromDocxBuffer(buffer: Buffer): Promise<DocxExtraction> {
   // DOCX = ZIP containing word/document.xml
   let text = '';
   let offset = 0;
@@ -60,7 +90,7 @@ async function extractTextFromDocxBuffer(buffer) {
 
     if (fileName === 'word/document.xml') {
       const compMethod = view.getUint16(offset + 8, true);
-      let xmlContent;
+      let xmlContent: string;
 
       if (compMethod === 0) {
         // Stored (no compression)
@@ -94,7 +124,7 @@ async function extractTextFromDocxBuffer(buffer) {
 }
 
 // ---- OCR via NuMarkdown ----
-async function ocrImage(base64Data, mimeType = 'image/png') {
+async function ocrImage(base64Data: string, mimeType: string = 'image/png'): Promise<string> {
   const dataUrl = `data:${mimeType};base64,${base64Data}`;
 
   const response = await callInference(OCR_MODEL, [
@@ -111,12 +141,12 @@ async function ocrImage(base64Data, mimeType = 'image/png') {
         }
       ]
     }
-  ], { temperature: 0.1, max_tokens: 4096 });
+  ] as unknown as string, { temperature: 0.1, max_tokens: 4096 } as Record<string, unknown> & { maxTokens?: number });
 
   return response;
 }
 
-async function ocrPdfPages(buffer) {
+async function ocrPdfPages(buffer: Buffer): Promise<string> {
   // For scanned PDFs: send entire PDF as base64 to vision model
   const base64 = buffer.toString('base64');
   const text = await ocrImage(base64, 'application/pdf');
@@ -124,10 +154,10 @@ async function ocrPdfPages(buffer) {
 }
 
 // ---- Main handler ----
-async function handler(input) {
+async function handler(input: HandlerInput): Promise<HandlerResult> {
   const { document_id, storage_path, content_type, raw_content, company_id } = input;
 
-  let buffer = null;
+  let buffer: Buffer | null = null;
   let text = '';
   let method = 'text';
   let pages = 1;
@@ -151,7 +181,7 @@ async function handler(input) {
       .download(storage_path);
 
     if (error) throw new Error(`Storage download failed: ${error.message}`);
-    buffer = Buffer.from(await data.arrayBuffer());
+    buffer = Buffer.from(await (data as Blob).arrayBuffer());
   } else {
     throw new Error('Either raw_content or storage_path is required');
   }
@@ -207,7 +237,7 @@ async function handler(input) {
   }
 
   // Detect language (simple heuristic)
-  const italianMarkers = ['contratto', 'articolo', 'comma', 'decreto', 'legge', 'società', 'partita iva', 'codice fiscale'];
+  const italianMarkers: string[] = ['contratto', 'articolo', 'comma', 'decreto', 'legge', 'società', 'partita iva', 'codice fiscale'];
   const lowerText = text.toLowerCase();
   const italianHits = italianMarkers.filter(m => lowerText.includes(m)).length;
   const language = italianHits >= 2 ? 'it' : 'en';
@@ -235,18 +265,18 @@ async function handler(input) {
 }
 
 // CLI entry point
-async function main() {
+async function main(): Promise<void> {
   try {
     let raw = '';
     for await (const chunk of process.stdin) {
       raw += chunk;
     }
-    const input = JSON.parse(raw);
+    const input: HandlerInput = JSON.parse(raw);
     const result = await handler(input);
     console.log(JSON.stringify(result));
     process.exit(0);
-  } catch (err) {
-    console.log(JSON.stringify({ error: err.message }));
+  } catch (err: unknown) {
+    console.log(JSON.stringify({ error: (err as Error).message }));
     process.exit(1);
   }
 }

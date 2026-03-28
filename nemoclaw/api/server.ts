@@ -1,11 +1,12 @@
+import type { Request, Response, NextFunction } from 'express'
 import express from 'express'
 import cors from 'cors'
 
-import authMiddleware, { requireCompanyMatch } from './middleware/auth.js'
-import analyzeRouter from './routes/analyze.js'
-import osintRouter from './routes/osint.js'
-import chatRouter from './routes/chat.js'
-import ocrRouter from './routes/ocr.js'
+import authMiddleware, { requireCompanyMatch } from './middleware/auth.ts'
+import analyzeRouter from './routes/analyze.ts'
+import osintRouter from './routes/osint.ts'
+import chatRouter from './routes/chat.ts'
+import ocrRouter from './routes/ocr.ts'
 
 const app = express()
 const PORT = process.env.PORT || 3100
@@ -18,7 +19,7 @@ const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,https
   .filter(Boolean)
 
 app.use(cors({
-  origin(origin, cb) {
+  origin(origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) {
     // Allow requests with no origin (curl, server-to-server)
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true)
     cb(new Error('CORS non consentito'))
@@ -30,28 +31,35 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }))
 
 // ── Health endpoint (no auth) ───────────────────────────────────────────────
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', version: VERSION, timestamp: new Date().toISOString() })
 })
 
 // ── Rate limiting (basic in-memory) ─────────────────────────────────────────
-const rateLimitMap = new Map()
+interface RateLimitEntry {
+  start: number
+  count: number
+}
+
+const rateLimitMap = new Map<string, RateLimitEntry>()
 const RATE_LIMIT_WINDOW_MS = 60_000
 const RATE_LIMIT_MAX = 60
 
-function rateLimit(req, res, next) {
-  const key = req.user?.id || req.ip
+function rateLimit(req: Request, res: Response, next: NextFunction): void {
+  const key = req.user?.id || req.ip || 'unknown'
   const now = Date.now()
   const entry = rateLimitMap.get(key)
 
   if (!entry || now - entry.start > RATE_LIMIT_WINDOW_MS) {
     rateLimitMap.set(key, { start: now, count: 1 })
-    return next()
+    next()
+    return
   }
 
   entry.count++
   if (entry.count > RATE_LIMIT_MAX) {
-    return res.status(429).json({ error: 'Troppe richieste. Riprova tra poco.' })
+    res.status(429).json({ error: 'Troppe richieste. Riprova tra poco.' })
+    return
   }
   next()
 }
@@ -71,7 +79,7 @@ app.use('/api/chat', authMiddleware, rateLimit, requireCompanyMatch, chatRouter)
 app.use('/api/ocr', authMiddleware, rateLimit, ocrRouter)
 
 // ── Global error handler ────────────────────────────────────────────────────
-app.use((err, _req, res, _next) => {
+app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[error]', err.message)
   const status = err.status || 500
   res.status(status).json({

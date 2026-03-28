@@ -1,6 +1,6 @@
-#!/usr/bin/env node
-import { supabase } from '../../_shared/supabase-client.js';
-import { callInference, parseInferenceJSON, isoNow } from '../../_shared/utils.js';
+#!/usr/bin/env -S node --experimental-strip-types
+import { supabase } from '../../_shared/supabase-client.ts'
+import { callInference, parseInferenceJSON, isoNow } from '../../_shared/utils.ts'
 
 const MAX_TEXT_LENGTH = 8000;
 
@@ -47,11 +47,45 @@ Rispondi ESCLUSIVAMENTE con un JSON valido, senza spiegazioni:
   "summary_it": "Breve riassunto in italiano del contratto (max 2 frasi)"
 }`;
 
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+interface HandlerInput {
+  text: string
+  contract_id?: string
+  company_id: string
+}
+
+interface CounterpartData {
+  name: string
+  vat?: string
+  cf?: string
+  role?: string
+}
+
+interface ClassificationParties {
+  company?: string
+  counterpart?: CounterpartData
+}
+
+interface Classification {
+  contract_type: string
+  counterpart_type: string | null
+  language: string | null
+  confidence: number
+  parties: ClassificationParties | null
+  summary_it: string | null
+  counterpart_id?: string
+  counterpart_error?: string
+  error?: string
+}
+
 /**
  * Find an existing counterpart or create a new one.
  * Returns the counterpart id.
  */
-async function findOrCreateCounterpart(companyId, counterpartData) {
+async function findOrCreateCounterpart(companyId: string, counterpartData: CounterpartData): Promise<string> {
   const { name, vat, cf } = counterpartData;
 
   // Search by VAT number first, then fiscal code
@@ -117,11 +151,8 @@ async function findOrCreateCounterpart(companyId, counterpartData) {
 
 /**
  * Classify an Italian contract via AI inference.
- *
- * @param {{ text: string, contract_id?: string, company_id: string }} input
- * @returns {Promise<object>} Classification result
  */
-async function handler(input) {
+async function handler(input: HandlerInput): Promise<Classification> {
   const { text, contract_id, company_id } = input;
 
   if (!text) throw new Error('Missing required field: text');
@@ -131,11 +162,11 @@ async function handler(input) {
     ? text.slice(0, MAX_TEXT_LENGTH)
     : text;
 
-  let classification;
+  let classification: Classification;
   try {
     const raw = await callInference(SYSTEM_PROMPT, userMessage);
-    classification = parseInferenceJSON(raw);
-  } catch (err) {
+    classification = parseInferenceJSON(raw) as Classification;
+  } catch (err: unknown) {
     return {
       contract_type: 'altro',
       counterpart_type: null,
@@ -143,13 +174,13 @@ async function handler(input) {
       confidence: 0,
       parties: null,
       summary_it: null,
-      error: `Inference failed: ${err.message}`,
+      error: `Inference failed: ${(err as Error).message}`,
     };
   }
 
   // --- Persist classification to the contracts table ---
   if (contract_id) {
-    const updates = {
+    const updates: Record<string, unknown> = {
       contract_type: classification.contract_type,
       counterpart_type: classification.counterpart_type,
       updated_at: isoNow(),
@@ -186,8 +217,8 @@ async function handler(input) {
       }
 
       classification.counterpart_id = counterpartId;
-    } catch (err) {
-      classification.counterpart_error = err.message;
+    } catch (err: unknown) {
+      classification.counterpart_error = (err as Error).message;
     }
   }
 
@@ -195,18 +226,18 @@ async function handler(input) {
 }
 
 // CLI entry point
-async function main() {
+async function main(): Promise<void> {
   try {
     let raw = '';
     for await (const chunk of process.stdin) {
       raw += chunk;
     }
-    const input = JSON.parse(raw);
+    const input: HandlerInput = JSON.parse(raw);
     const result = await handler(input);
     console.log(JSON.stringify(result));
     process.exit(0);
-  } catch (err) {
-    console.log(JSON.stringify({ error: err.message }));
+  } catch (err: unknown) {
+    console.log(JSON.stringify({ error: (err as Error).message }));
     process.exit(1);
   }
 }

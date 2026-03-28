@@ -1,10 +1,20 @@
-const LITELLM_URL = process.env.LITELLM_URL || 'http://litellm-proxy:4000'
-const LITELLM_API_KEY = process.env.LITELLM_API_KEY || ''
+import type { ChatMessage } from '../types.ts'
+
+const LITELLM_URL: string = process.env.LITELLM_URL || 'http://litellm-proxy:4000'
+const LITELLM_API_KEY: string = process.env.LITELLM_API_KEY || ''
 
 const DEFAULT_MODEL = 'nemotron-orchestrator'
 
-function buildHeaders() {
-  const headers = { 'Content-Type': 'application/json' }
+interface ChatCompletionOptions {
+  model?: string
+  messages: (ChatMessage | { role: string; content: unknown })[]
+  temperature?: number
+  max_tokens?: number
+  response_format?: { type: string }
+}
+
+function buildHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (LITELLM_API_KEY) {
     headers['Authorization'] = `Bearer ${LITELLM_API_KEY}`
   }
@@ -20,8 +30,8 @@ export async function chatCompletion({
   temperature = 0.2,
   max_tokens = 4096,
   response_format,
-}) {
-  const body = { model, messages, temperature, max_tokens }
+}: ChatCompletionOptions): Promise<string> {
+  const body: Record<string, unknown> = { model, messages, temperature, max_tokens }
   if (response_format) body.response_format = response_format
 
   const res = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
@@ -35,7 +45,7 @@ export async function chatCompletion({
     throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 200)}`)
   }
 
-  const data = await res.json()
+  const data = await res.json() as { choices: { message: { content: string } }[] }
   return data.choices[0].message.content
 }
 
@@ -47,7 +57,7 @@ export async function* chatCompletionStream({
   messages,
   temperature = 0.4,
   max_tokens = 4096,
-}) {
+}: ChatCompletionOptions): AsyncGenerator<string> {
   const res = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
     method: 'POST',
     headers: buildHeaders(),
@@ -59,7 +69,7 @@ export async function* chatCompletionStream({
     throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 200)}`)
   }
 
-  const reader = res.body.getReader()
+  const reader = res.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
@@ -77,7 +87,7 @@ export async function* chatCompletionStream({
       const payload = trimmed.slice(6)
       if (payload === '[DONE]') return
       try {
-        const parsed = JSON.parse(payload)
+        const parsed = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] }
         const delta = parsed.choices?.[0]?.delta?.content
         if (delta) yield delta
       } catch {
@@ -91,7 +101,7 @@ export async function* chatCompletionStream({
  * Parse structured JSON from inference output.
  * Strips markdown code fences if present.
  */
-export function parseInferenceJSON(text) {
+export function parseInferenceJSON(text: string): unknown {
   let cleaned = text.trim()
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')

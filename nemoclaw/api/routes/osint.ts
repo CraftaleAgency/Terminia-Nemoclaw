@@ -1,8 +1,16 @@
-/** @typedef {import('../types.js').VerifyOSINTRequest} VerifyOSINTRequest */
-/** @typedef {import('../types.js').VerifyOSINTResponse} VerifyOSINTResponse */
-
+import type { Request, Response } from 'express'
+import type {
+  VerifyOSINTRequest,
+  VerifyOSINTResponse,
+  VIESResult,
+  FiscalCodeResult,
+  FiscalCodeExtracted,
+  ANACResult,
+  ANACAnnotation,
+  ReliabilityDimensions,
+} from '../types.ts'
 import { Router } from 'express'
-import supabase from '../lib/supabase.js'
+import supabase from '../lib/supabase.ts'
 
 const router = Router()
 
@@ -13,16 +21,16 @@ const API_TIMEOUT_MS = 5000
 
 // ── Italian Fiscal Code (Codice Fiscale) Algorithm ──────────────────────────
 
-const MONTH_CODES = {
+const MONTH_CODES: Record<string, number> = {
   A: 1, B: 2, C: 3, D: 4, E: 5, H: 6,
   L: 7, M: 8, P: 9, R: 10, S: 11, T: 12,
 }
 
-const EVEN_MAP = {}
+const EVEN_MAP: Record<string, number> = {}
 for (let i = 0; i < 10; i++) EVEN_MAP[String(i)] = i
 for (let i = 0; i < 26; i++) EVEN_MAP[String.fromCharCode(65 + i)] = i
 
-const ODD_MAP = {
+const ODD_MAP: Record<string, number> = {
   '0': 1,  '1': 0,  '2': 5,  '3': 7,  '4': 9,
   '5': 13, '6': 15, '7': 17, '8': 19, '9': 21,
   A: 1,  B: 0,  C: 5,  D: 7,  E: 9,
@@ -34,7 +42,7 @@ const ODD_MAP = {
 
 const CHECK_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
-function computeCheckChar(first15) {
+function computeCheckChar(first15: string): string {
   let sum = 0
   for (let i = 0; i < 15; i++) {
     const ch = first15[i]
@@ -43,9 +51,9 @@ function computeCheckChar(first15) {
   return CHECK_LETTERS[sum % 26]
 }
 
-function validateFiscalCode(cf) {
+function validateFiscalCode(cf: string): FiscalCodeResult {
   const code = cf.toUpperCase().trim()
-  const errors = []
+  const errors: string[] = []
 
   if (code.length !== 16) {
     errors.push(`Lunghezza non valida: attesi 16 caratteri, trovati ${code.length}`)
@@ -75,7 +83,7 @@ function validateFiscalCode(cf) {
   const birthDay = birthDayRaw > 40 ? birthDayRaw - 40 : birthDayRaw
   if (birthDay < 1 || birthDay > 31) errors.push(`Giorno di nascita non valido: ${birthDay}`)
 
-  const extracted = {
+  const extracted: FiscalCodeExtracted = {
     surname_code: code.slice(0, 3),
     name_code: code.slice(3, 6),
     birth_year: code.slice(6, 8),
@@ -101,7 +109,7 @@ const EU_COUNTRY_CODES = new Set([
   'NL', 'PL', 'PT', 'RO', 'SE', 'SI', 'SK', 'XI',
 ])
 
-function parseVat(raw) {
+function parseVat(raw: string): { countryCode: string; vatNumber: string } {
   const cleaned = raw.replace(/\s+/g, '').toUpperCase()
   const match = cleaned.match(/^([A-Z]{2})(\d.*)$/)
   if (match) return { countryCode: match[1], vatNumber: match[2] }
@@ -109,7 +117,7 @@ function parseVat(raw) {
   return { countryCode: 'IT', vatNumber: cleaned }
 }
 
-async function checkVies(vatRaw) {
+async function checkVies(vatRaw: string): Promise<VIESResult> {
   const { countryCode, vatNumber } = parseVat(vatRaw)
 
   if (!EU_COUNTRY_CODES.has(countryCode)) {
@@ -127,14 +135,14 @@ async function checkVies(vatRaw) {
       signal: controller.signal,
     })
     if (!res.ok) throw new Error(`VIES HTTP ${res.status}`)
-    const data = await res.json()
+    const data = await res.json() as Record<string, unknown>
     return {
-      valid: data.isValid ?? null,
-      country_code: data.countryCode ?? countryCode,
-      vat_number: data.vatNumber ?? vatNumber,
-      name: data.name ?? null,
-      address: data.address ?? null,
-      request_date: data.requestDate ?? new Date().toISOString(),
+      valid: (data.isValid as boolean) ?? null,
+      country_code: (data.countryCode as string) ?? countryCode,
+      vat_number: (data.vatNumber as string) ?? vatNumber,
+      name: (data.name as string) ?? null,
+      address: (data.address as string) ?? null,
+      request_date: (data.requestDate as string) ?? new Date().toISOString(),
       error: null,
     }
   } catch (err) {
@@ -142,7 +150,7 @@ async function checkVies(vatRaw) {
       valid: null,
       country_code: countryCode,
       vat_number: vatNumber,
-      error: err.name === 'AbortError' ? 'VIES timeout' : 'VIES non disponibile',
+      error: (err as Error).name === 'AbortError' ? 'VIES timeout' : 'VIES non disponibile',
     }
   } finally {
     clearTimeout(timeout)
@@ -151,17 +159,17 @@ async function checkVies(vatRaw) {
 
 // ── ANAC Casellario ─────────────────────────────────────────────────────────
 
-function stripTags(html) {
+function stripTags(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-function decodeEntities(text) {
+function decodeEntities(text: string): string {
   return text
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
 }
 
-function classifyAnnotation(text) {
+function classifyAnnotation(text: string): string {
   const lower = text.toLowerCase()
   if (/esclusione|esclus[ao]|interdizione|interdi[ct]/.test(lower)) return 'esclusione'
   if (/falsa dichiarazione|falsa\s+dichiaraz/.test(lower)) return 'falsa_dichiarazione'
@@ -169,7 +177,7 @@ function classifyAnnotation(text) {
   return 'altro'
 }
 
-function extractDate(text) {
+function extractDate(text: string): string | null {
   const dmy = text.match(/(\d{2})\/(\d{2})\/(\d{4})/)
   if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`
   const iso = text.match(/(\d{4})-(\d{2})-(\d{2})/)
@@ -177,7 +185,7 @@ function extractDate(text) {
   return null
 }
 
-function parseAnnotations(html) {
+function parseAnnotations(html: string): { ok: boolean; annotations: ANACAnnotation[]; error?: string } {
   const noResultPatterns = [
     /nessun\s+risultato/i, /0\s+risultat/i, /nessuna\s+annotazione/i,
     /nessun\s+dato/i, /non\s+sono\s+presenti/i, /nessuna\s+corrispondenza/i,
@@ -186,17 +194,17 @@ function parseAnnotations(html) {
     if (pat.test(html)) return { ok: true, annotations: [] }
   }
 
-  const annotations = []
+  const annotations: ANACAnnotation[] = []
   const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi
   const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi
-  let rowMatch
+  let rowMatch: RegExpExecArray | null
   let dataRowCount = 0
 
   while ((rowMatch = rowRe.exec(html)) !== null) {
     const rowHtml = rowMatch[1]
     if (/<th[\s>]/i.test(rowHtml)) continue
-    const cells = []
-    let cellMatch
+    const cells: string[] = []
+    let cellMatch: RegExpExecArray | null
     cellRe.lastIndex = 0
     while ((cellMatch = cellRe.exec(rowHtml)) !== null) {
       cells.push(decodeEntities(stripTags(cellMatch[1])))
@@ -222,7 +230,7 @@ function parseAnnotations(html) {
   return { ok: !hasResultSection, annotations: [], error: hasResultSection ? 'page_structure_changed' : undefined }
 }
 
-async function checkAnac(vatNumber, companyName) {
+async function checkAnac(vatNumber: string | undefined, companyName: string | undefined): Promise<ANACResult> {
   const vatClean = (vatNumber || '').replace(/\s+/g, '').replace(/^IT/i, '')
   const params = new URLSearchParams()
   if (vatClean) params.set('partitaIva', vatClean)
@@ -258,7 +266,7 @@ async function checkAnac(vatNumber, companyName) {
       checked: false,
       annotations_found: false,
       annotations: [],
-      error: err.name === 'AbortError' ? 'anac_timeout' : 'anac_unavailable',
+      error: (err as Error).name === 'AbortError' ? 'anac_timeout' : 'anac_unavailable',
     }
   } finally {
     clearTimeout(timeout)
@@ -267,12 +275,16 @@ async function checkAnac(vatNumber, companyName) {
 
 // ── Reliability Score ───────────────────────────────────────────────────────
 
-function clamp(v, min, max) {
+function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v))
 }
 
-function computeReliabilityScore(vies, cf, anac) {
-  const dimensions = {
+function computeReliabilityScore(
+  vies: VIESResult | null,
+  cf: FiscalCodeResult | null,
+  anac: ANACResult | null,
+): { score: number; dimensions: ReliabilityDimensions } {
+  const dimensions: ReliabilityDimensions = {
     legal: 0,
     contributory: 0,
     reputation: 0,
@@ -317,12 +329,7 @@ function computeReliabilityScore(vies, cf, anac) {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
-/**
- * Verify a counterpart via VIES, fiscal code, and ANAC checks.
- * @param {import('express').Request<{}, VerifyOSINTResponse, VerifyOSINTRequest>} req
- * @param {import('express').Response<VerifyOSINTResponse>} res
- */
-router.post('/', async (req, res) => {
+router.post('/', async (req: Request<object, VerifyOSINTResponse, VerifyOSINTRequest>, res: Response) => {
   const { vat_number, fiscal_code, company_name, counterpart_id } = req.body
 
   if (!vat_number && !fiscal_code && !company_name) {
@@ -332,7 +339,7 @@ router.post('/', async (req, res) => {
   }
 
   // Run checks in parallel
-  const promises = []
+  const promises: Promise<{ key: string; result: VIESResult | FiscalCodeResult | ANACResult | null }>[] = []
 
   // VIES
   if (vat_number) {
@@ -356,9 +363,9 @@ router.post('/', async (req, res) => {
   }
 
   const results = await Promise.all(promises)
-  const vies = results.find(r => r.key === 'vies')?.result
-  const cf = results.find(r => r.key === 'fiscal_code')?.result
-  const anac = results.find(r => r.key === 'anac')?.result
+  const vies = results.find(r => r.key === 'vies')?.result as VIESResult | null
+  const cf = results.find(r => r.key === 'fiscal_code')?.result as FiscalCodeResult | null
+  const anac = results.find(r => r.key === 'anac')?.result as ANACResult | null
 
   const { score, dimensions } = computeReliabilityScore(vies, cf, anac)
 
@@ -371,7 +378,7 @@ router.post('/', async (req, res) => {
         .eq('id', counterpart_id)
         .single()
 
-      const verificationJson = existing?.verification_json ?? {}
+      const verificationJson: Record<string, unknown> = (existing?.verification_json as Record<string, unknown>) ?? {}
       if (vies) verificationJson.vies = { ...vies, checked_at: new Date().toISOString() }
       if (cf) verificationJson.fiscal_code = { ...cf, checked_at: new Date().toISOString() }
       if (anac) verificationJson.anac = { ...anac, checked_at: new Date().toISOString() }
@@ -386,7 +393,7 @@ router.post('/', async (req, res) => {
         score_reputation: dimensions.reputation,
         score_solidity: dimensions.solidity,
         score_consistency: dimensions.consistency,
-        verification_json: verificationJson,
+        verification_json: verificationJson as unknown as string,
         reliability_updated_at: new Date().toISOString(),
       }).eq('id', counterpart_id)
     } catch {

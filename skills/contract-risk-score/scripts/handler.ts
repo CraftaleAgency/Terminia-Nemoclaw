@@ -1,8 +1,8 @@
-#!/usr/bin/env node
-import { supabase } from '../../_shared/supabase-client.js';
-import { callInference, parseInferenceJSON, isoNow, clamp } from '../../_shared/utils.js';
+#!/usr/bin/env -S node --experimental-strip-types
+import { supabase } from '../../_shared/supabase-client.ts'
+import { callInference, parseInferenceJSON, isoNow, clamp } from '../../_shared/utils.ts'
 
-const RISK_LABELS = [
+const RISK_LABELS: Array<[number, string]> = [
   [76, 'critical'],
   [51, 'high'],
   [26, 'medium'],
@@ -11,20 +11,107 @@ const RISK_LABELS = [
 
 const CLAUSE_RISK_SYSTEM_PROMPT = `Sei un consulente legale italiano. Analizza queste clausole contrattuali rischiose e fornisci un breve parere in italiano su ciascuna, spiegando il rischio concreto per l'azienda e cosa fare. Rispondi in JSON: { "clause_assessments": [{ "clause_type": "...", "risk_summary_it": "...", "recommendation_it": "..." }] }`;
 
-const RISK_LEVEL_ORDER = { low: 0, medium: 1, high: 2, critical: 3 };
+const RISK_LEVEL_ORDER: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
-function riskAtLeast(level, threshold) {
-  return (RISK_LEVEL_ORDER[level] ?? 0) >= (RISK_LEVEL_ORDER[threshold] ?? 0);
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+interface HandlerInput {
+  contract_id: string
+  company_id: string
 }
 
-function daysUntil(dateStr) {
+interface ContractRow {
+  id: string
+  auto_renewal?: boolean
+  renewal_notice_days?: number | null
+  payment_terms_days?: number | null
+  end_date?: string | null
+  [key: string]: unknown
+}
+
+interface ClauseRow {
+  id?: string
+  clause_type?: string
+  risk_level?: string
+  summary?: string
+  title?: string
+  original_text?: string
+  [key: string]: unknown
+}
+
+interface ObligationRow {
+  id?: string
+  description?: string | null
+  deadline?: string | null
+  [key: string]: unknown
+}
+
+interface MilestoneRow {
+  id?: string
+  title?: string | null
+  due_date?: string | null
+  amount?: number | null
+  [key: string]: unknown
+}
+
+interface RuleScores {
+  renewal_risk: number
+  payment_risk: number
+  duration_risk: number
+  clause_risk: number
+  specific_clause_risk: number
+  obligation_risk: number
+}
+
+interface ClauseAssessment {
+  clause_type: string
+  risk_summary_it: string
+  recommendation_it: string
+}
+
+interface ClauseAssessmentResponse {
+  clause_assessments: ClauseAssessment[]
+}
+
+interface RiskDetails {
+  rule_scores: RuleScores
+  clause_assessments: ClauseAssessment[]
+  total: number
+}
+
+interface AlertRow {
+  company_id: string
+  type: string
+  title: string
+  message: string
+  priority: string
+  related_entity_type: string
+  related_entity_id: string
+  created_at: string
+}
+
+interface HandlerResult {
+  risk_score: number
+  risk_label: string
+  risk_details: RiskDetails
+  alerts_created: number
+  write_errors?: string[]
+}
+
+function riskAtLeast(level: string | undefined, threshold: string): boolean {
+  return (RISK_LEVEL_ORDER[level ?? ''] ?? 0) >= (RISK_LEVEL_ORDER[threshold] ?? 0);
+}
+
+function daysUntil(dateStr: string | null | undefined): number {
   if (!dateStr) return Infinity;
   const target = new Date(dateStr);
   const now = new Date();
-  return Math.floor((target - now) / (1000 * 60 * 60 * 24));
+  return Math.floor((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function riskLabel(score) {
+function riskLabel(score: number): string {
   for (const [threshold, label] of RISK_LABELS) {
     if (score >= threshold) return label;
   }
@@ -33,7 +120,14 @@ function riskLabel(score) {
 
 // ── Step 1: Fetch contract data ─────────────────────────────────────────────
 
-async function fetchContractData(contractId) {
+interface ContractData {
+  contract: ContractRow
+  clauses: ClauseRow[]
+  obligations: ObligationRow[]
+  milestones: MilestoneRow[]
+}
+
+async function fetchContractData(contractId: string): Promise<ContractData> {
   const { data: contract, error: cErr } = await supabase
     .from('contracts')
     .select('*')
@@ -59,12 +153,17 @@ async function fetchContractData(contractId) {
     .eq('contract_id', contractId);
   if (mErr) throw new Error(`Failed to fetch milestones: ${mErr.message}`);
 
-  return { contract, clauses: clauses || [], obligations: obligations || [], milestones: milestones || [] };
+  return {
+    contract: contract as ContractRow,
+    clauses: (clauses || []) as ClauseRow[],
+    obligations: (obligations || []) as ObligationRow[],
+    milestones: (milestones || []) as MilestoneRow[],
+  };
 }
 
 // ── Step 2: Rules-based scoring ─────────────────────────────────────────────
 
-function computeRuleScores(contract, clauses, obligations) {
+function computeRuleScores(contract: ContractRow, clauses: ClauseRow[], obligations: ObligationRow[]): RuleScores {
   let renewalRisk = 0;
   if (contract.auto_renewal) {
     if (contract.renewal_notice_days == null) {
@@ -77,9 +176,9 @@ function computeRuleScores(contract, clauses, obligations) {
   }
 
   let paymentRisk = 0;
-  if (contract.payment_terms_days > 60) {
+  if ((contract.payment_terms_days ?? 0) > 60) {
     paymentRisk = 10;
-  } else if (contract.payment_terms_days > 30) {
+  } else if ((contract.payment_terms_days ?? 0) > 30) {
     paymentRisk = 5;
   }
 
@@ -141,7 +240,7 @@ function computeRuleScores(contract, clauses, obligations) {
 
 // ── Step 3: AI clause assessment ────────────────────────────────────────────
 
-async function assessRiskyClauses(clauses) {
+async function assessRiskyClauses(clauses: ClauseRow[]): Promise<ClauseAssessment[]> {
   const risky = clauses.filter((c) => riskAtLeast(c.risk_level, 'high'));
   if (!risky.length) return [];
 
@@ -157,7 +256,7 @@ async function assessRiskyClauses(clauses) {
       JSON.stringify(clauseSummaries),
       { maxTokens: 2048 },
     );
-    const parsed = parseInferenceJSON(raw);
+    const parsed = parseInferenceJSON(raw) as ClauseAssessmentResponse;
     return parsed.clause_assessments || [];
   } catch {
     return [];
@@ -166,16 +265,23 @@ async function assessRiskyClauses(clauses) {
 
 // ── Step 5: Create alerts ───────────────────────────────────────────────────
 
-function priorityFromDays(days) {
+function priorityFromDays(days: number): string {
   if (days < 0) return 'urgent';
   if (days <= 7) return 'high';
   if (days <= 14) return 'medium';
   return 'low';
 }
 
-function buildAlerts(contract, contractId, companyId, riskScore, obligations, milestones) {
+function buildAlerts(
+  contract: ContractRow,
+  contractId: string,
+  companyId: string,
+  riskScore: number,
+  obligations: ObligationRow[],
+  milestones: MilestoneRow[],
+): AlertRow[] {
   const now = isoNow();
-  const alerts = [];
+  const alerts: AlertRow[] = [];
 
   if (riskScore >= 70) {
     alerts.push({
@@ -240,7 +346,7 @@ function buildAlerts(contract, contractId, companyId, riskScore, obligations, mi
   return alerts;
 }
 
-async function insertAlerts(alerts) {
+async function insertAlerts(alerts: AlertRow[]): Promise<number> {
   if (!alerts.length) return 0;
   const { error } = await supabase.from('alerts').insert(alerts);
   if (error) throw new Error(`Failed to insert alerts: ${error.message}`);
@@ -249,7 +355,7 @@ async function insertAlerts(alerts) {
 
 // ── Step 5b: Update contract with risk results ──────────────────────────────
 
-async function updateContractRisk(contractId, riskScore, riskLbl, riskDetails) {
+async function updateContractRisk(contractId: string, riskScore: number, riskLbl: string, riskDetails: RiskDetails): Promise<void> {
   const { error } = await supabase
     .from('contracts')
     .update({
@@ -267,11 +373,8 @@ async function updateContractRisk(contractId, riskScore, riskLbl, riskDetails) {
 
 /**
  * Compute risk score for a contract that has already been extracted.
- *
- * @param {{ contract_id: string, company_id: string }} input
- * @returns {Promise<{ risk_score: number, risk_label: string, risk_details: object, alerts_created: number }>}
  */
-async function handler(input) {
+async function handler(input: HandlerInput): Promise<HandlerResult> {
   const { contract_id, company_id } = input;
 
   if (!contract_id) throw new Error('Missing required field: contract_id');
@@ -282,7 +385,7 @@ async function handler(input) {
 
   // Step 2 — Rules-based scoring
   const ruleScores = computeRuleScores(contract, clauses, obligations);
-  const rawTotal = Object.values(ruleScores).reduce((sum, v) => sum + v, 0);
+  const rawTotal = Object.values(ruleScores).reduce((sum: number, v: number) => sum + v, 0);
   const riskScore = clamp(rawTotal, 0, 100);
 
   // Step 3 — AI-powered clause assessment (only for high/critical clauses)
@@ -292,31 +395,31 @@ async function handler(input) {
   const riskLbl = riskLabel(riskScore);
 
   // Build risk details payload
-  const riskDetails = {
+  const riskDetails: RiskDetails = {
     rule_scores: ruleScores,
     clause_assessments: clauseAssessments,
     total: riskScore,
   };
 
   // Step 5 — Persist results and create alerts
-  const writeErrors = [];
+  const writeErrors: string[] = [];
 
   try {
     await updateContractRisk(contract_id, riskScore, riskLbl, riskDetails);
-  } catch (err) {
-    writeErrors.push(err.message);
+  } catch (err: unknown) {
+    writeErrors.push((err as Error).message);
   }
 
   let alertsCreated = 0;
   try {
     const alerts = buildAlerts(contract, contract_id, company_id, riskScore, obligations, milestones);
     alertsCreated = await insertAlerts(alerts);
-  } catch (err) {
-    writeErrors.push(err.message);
+  } catch (err: unknown) {
+    writeErrors.push((err as Error).message);
   }
 
   // Step 6 — Return result
-  const result = {
+  const result: HandlerResult = {
     risk_score: riskScore,
     risk_label: riskLbl,
     risk_details: riskDetails,
@@ -331,18 +434,18 @@ async function handler(input) {
 }
 
 // CLI entry point
-async function main() {
+async function main(): Promise<void> {
   try {
     let raw = '';
     for await (const chunk of process.stdin) {
       raw += chunk;
     }
-    const input = JSON.parse(raw);
+    const input: HandlerInput = JSON.parse(raw);
     const result = await handler(input);
     console.log(JSON.stringify(result));
     process.exit(0);
-  } catch (err) {
-    console.log(JSON.stringify({ error: err.message }));
+  } catch (err: unknown) {
+    console.log(JSON.stringify({ error: (err as Error).message }));
     process.exit(1);
   }
 }

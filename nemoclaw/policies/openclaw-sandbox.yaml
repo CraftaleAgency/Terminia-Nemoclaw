@@ -114,6 +114,7 @@ network:
   - name: supabase
     endpoints:
       - "*.supabase.co:443"
+      - "supabase.terminia.it:443"
     binaries:
       - /usr/local/bin/node
       - /usr/local/bin/openclaw

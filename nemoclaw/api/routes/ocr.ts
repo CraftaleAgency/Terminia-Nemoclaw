@@ -1,9 +1,8 @@
-/** @typedef {import('../types.js').OCRRequest} OCRRequest */
-/** @typedef {import('../types.js').OCRResponse} OCRResponse */
-
+import type { Request, Response } from 'express'
+import type { OCRResponse } from '../types.ts'
 import { Router } from 'express'
 import multer from 'multer'
-import { chatCompletion } from '../lib/inference.js'
+import { chatCompletion } from '../lib/inference.ts'
 
 const router = Router()
 
@@ -12,17 +11,12 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 })
 
-/**
- * Extract text from an image or document via OCR.
- * @param {import('express').Request<{}, OCRResponse, OCRRequest>} req
- * @param {import('express').Response<OCRResponse>} res
- */
-router.post('/', upload.single('file'), async (req, res) => {
-  let imageUrl
+router.post('/', upload.single('file'), async (req: Request, res: Response<OCRResponse | { error: string }>) => {
+  let imageUrl: string | undefined
 
   // Option 1: JSON body with base64
   if (req.body.image_base64) {
-    imageUrl = req.body.image_base64
+    imageUrl = req.body.image_base64 as string
     if (!imageUrl.startsWith('data:')) {
       imageUrl = `data:image/png;base64,${imageUrl}`
     }
@@ -57,7 +51,7 @@ router.post('/', upload.single('file'), async (req, res) => {
 
     res.json({ text, format: 'markdown' })
   } catch (err) {
-    res.status(502).json({ error: `OCR fallito: ${err.message}` })
+    res.status(502).json({ error: `OCR fallito: ${(err as Error).message}` })
   }
 })
 

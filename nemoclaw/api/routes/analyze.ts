@@ -1,9 +1,15 @@
-/** @typedef {import('../types.js').AnalyzeContractRequest} AnalyzeContractRequest */
-/** @typedef {import('../types.js').AnalyzeContractResponse} AnalyzeContractResponse */
-
+import type { Request, Response } from 'express'
+import type {
+  AnalyzeContractRequest,
+  AnalyzeContractResponse,
+  ContractClassification,
+  ContractExtraction,
+  ContractRisk,
+  CounterpartInfo,
+} from '../types.ts'
 import { Router } from 'express'
-import supabase from '../lib/supabase.js'
-import { chatCompletion, parseInferenceJSON } from '../lib/inference.js'
+import supabase from '../lib/supabase.ts'
+import { chatCompletion, parseInferenceJSON } from '../lib/inference.ts'
 
 const router = Router()
 
@@ -128,15 +134,15 @@ Rispondi ESCLUSIVAMENTE con un JSON valido:
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function isoNow() {
+function isoNow(): string {
   return new Date().toISOString()
 }
 
-function clamp(value, min, max) {
+function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-async function findOrCreateCounterpart(companyId, cp) {
+async function findOrCreateCounterpart(companyId: string, cp: CounterpartInfo): Promise<string> {
   const { name, vat, cf } = cp
 
   if (vat) {
@@ -163,7 +169,7 @@ async function findOrCreateCounterpart(companyId, cp) {
     .from('counterparts')
     .insert({
       company_id: companyId,
-      name,
+      name: name!,
       vat_number: vat || null,
       fiscal_code: cf || null,
       role: cp.role || null,
@@ -187,12 +193,7 @@ async function findOrCreateCounterpart(companyId, cp) {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
-/**
- * Analyze a contract: classify, extract data, and score risk.
- * @param {import('express').Request<{}, AnalyzeContractResponse, AnalyzeContractRequest>} req
- * @param {import('express').Response<AnalyzeContractResponse>} res
- */
-router.post('/', async (req, res) => {
+router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeContractRequest>, res: Response) => {
   const { document_text, document_base64, content_type, company_id, contract_id } = req.body
 
   if (!company_id) {
@@ -227,7 +228,7 @@ router.post('/', async (req, res) => {
       })
       text = ocrResult
     } catch (err) {
-      return res.status(422).json({ error: `OCR fallito: ${err.message}` })
+      return res.status(422).json({ error: `OCR fallito: ${(err as Error).message}` })
     }
   }
 
@@ -236,10 +237,10 @@ router.post('/', async (req, res) => {
   }
 
   const truncated = text.slice(0, MAX_TEXT_LENGTH)
-  const errors = []
+  const errors: string[] = []
 
   // ── Step 1: Classify ──────────────────────────────────────────────────────
-  let classification
+  let classification: ContractClassification
   try {
     const raw = await chatCompletion({
       messages: [
@@ -248,7 +249,7 @@ router.post('/', async (req, res) => {
       ],
       response_format: { type: 'json_object' },
     })
-    classification = parseInferenceJSON(raw)
+    classification = parseInferenceJSON(raw) as ContractClassification
   } catch (err) {
     classification = {
       contract_type: 'altro',
@@ -257,13 +258,13 @@ router.post('/', async (req, res) => {
       parties: null,
       summary_it: null,
     }
-    errors.push(`Classificazione fallita: ${err.message}`)
+    errors.push(`Classificazione fallita: ${(err as Error).message}`)
   }
 
   // Persist classification
   if (contract_id) {
     try {
-      const updates = {
+      const updates: Record<string, unknown> = {
         contract_type: classification.contract_type,
         counterpart_type: classification.counterpart_type,
         updated_at: isoNow(),
@@ -275,12 +276,12 @@ router.post('/', async (req, res) => {
       }
       await supabase.from('contracts').update(updates).eq('id', contract_id)
     } catch (err) {
-      errors.push(`DB classificazione: ${err.message}`)
+      errors.push(`DB classificazione: ${(err as Error).message}`)
     }
   }
 
   // Find or create counterpart
-  let counterpartId = null
+  let counterpartId: string | null = null
   const cp = classification.parties?.counterpart
   if (cp?.name && (cp.vat || cp.cf)) {
     try {
@@ -291,12 +292,12 @@ router.post('/', async (req, res) => {
           .eq('id', contract_id)
       }
     } catch (err) {
-      errors.push(`Controparte: ${err.message}`)
+      errors.push(`Controparte: ${(err as Error).message}`)
     }
   }
 
   // ── Step 2: Extract ───────────────────────────────────────────────────────
-  let extraction
+  let extraction: ContractExtraction
   try {
     const raw = await chatCompletion({
       messages: [
@@ -306,10 +307,10 @@ router.post('/', async (req, res) => {
       max_tokens: 4096,
       response_format: { type: 'json_object' },
     })
-    extraction = parseInferenceJSON(raw)
+    extraction = parseInferenceJSON(raw) as ContractExtraction
   } catch (err) {
     extraction = { dates: null, value: null, renewal: null, clauses: [], obligations: [], milestones: [] }
-    errors.push(`Estrazione fallita: ${err.message}`)
+    errors.push(`Estrazione fallita: ${(err as Error).message}`)
   }
 
   // Persist extraction
@@ -329,7 +330,7 @@ router.post('/', async (req, res) => {
         updated_at: isoNow(),
       }).eq('id', contract_id)
     } catch (err) {
-      errors.push(`DB estrazione: ${err.message}`)
+      errors.push(`DB estrazione: ${(err as Error).message}`)
     }
 
     // Clauses
@@ -349,7 +350,7 @@ router.post('/', async (req, res) => {
           }))
         )
       } catch (err) {
-        errors.push(`DB clausole: ${err.message}`)
+        errors.push(`DB clausole: ${(err as Error).message}`)
       }
     }
 
@@ -369,7 +370,7 @@ router.post('/', async (req, res) => {
           }))
         )
       } catch (err) {
-        errors.push(`DB obblighi: ${err.message}`)
+        errors.push(`DB obblighi: ${(err as Error).message}`)
       }
     }
 
@@ -388,13 +389,13 @@ router.post('/', async (req, res) => {
           }))
         )
       } catch (err) {
-        errors.push(`DB milestones: ${err.message}`)
+        errors.push(`DB milestones: ${(err as Error).message}`)
       }
     }
   }
 
   // ── Step 3: Risk Score ────────────────────────────────────────────────────
-  let risk
+  let risk: ContractRisk
   try {
     const context = JSON.stringify({
       classification,
@@ -411,11 +412,11 @@ router.post('/', async (req, res) => {
       ],
       response_format: { type: 'json_object' },
     })
-    risk = parseInferenceJSON(raw)
+    risk = parseInferenceJSON(raw) as ContractRisk
     risk.risk_score = clamp(risk.risk_score ?? 0, 0, 100)
   } catch (err) {
     risk = { risk_score: null, risk_label: null, dimensions: null, top_risks: [], recommendations_it: [] }
-    errors.push(`Rischio fallito: ${err.message}`)
+    errors.push(`Rischio fallito: ${(err as Error).message}`)
   }
 
   // Persist risk
@@ -424,12 +425,12 @@ router.post('/', async (req, res) => {
       await supabase.from('contracts').update({
         risk_score: risk.risk_score,
         risk_label: risk.risk_label,
-        risk_details: { dimensions: risk.dimensions, top_risks: risk.top_risks },
+        risk_details: { dimensions: risk.dimensions, top_risks: risk.top_risks } as unknown as string,
         status: 'analyzed',
         updated_at: isoNow(),
       }).eq('id', contract_id)
     } catch (err) {
-      errors.push(`DB rischio: ${err.message}`)
+      errors.push(`DB rischio: ${(err as Error).message}`)
     }
 
     // Create alerts for high-risk contracts
@@ -452,7 +453,7 @@ router.post('/', async (req, res) => {
   }
 
   // ── Response ──────────────────────────────────────────────────────────────
-  const result = {
+  const result: AnalyzeContractResponse & { warnings?: string[] } = {
     classification,
     extraction,
     risk,

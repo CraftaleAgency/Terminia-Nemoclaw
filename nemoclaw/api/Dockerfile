@@ -1,7 +1,7 @@
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
-COPY package.json ./
+COPY package*.json ./
 RUN npm install --production
 COPY . .
 EXPOSE 3100
-CMD ["node", "server.js"]
+CMD ["node", "--experimental-strip-types", "server.ts"]

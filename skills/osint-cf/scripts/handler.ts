@@ -1,23 +1,23 @@
-#!/usr/bin/env node
-import { isoNow } from '../../_shared/utils.js';
-import { supabase } from '../../_shared/supabase-client.js';
+#!/usr/bin/env -S node --experimental-strip-types
+import { isoNow } from '../../_shared/utils.ts'
+import { supabase } from '../../_shared/supabase-client.ts'
 
 // ── Month code mapping ───────────────────────────────────────────────
-const MONTH_CODES = {
+const MONTH_CODES: Record<string, number> = {
   A: 1, B: 2, C: 3, D: 4, E: 5, H: 6,
   L: 7, M: 8, P: 9, R: 10, S: 11, T: 12,
 };
 
-const MONTH_TO_LETTER = Object.fromEntries(
+const MONTH_TO_LETTER: Record<number, string> = Object.fromEntries(
   Object.entries(MONTH_CODES).map(([k, v]) => [v, k]),
 );
 
 // ── Check-character tables (1-indexed positions) ─────────────────────
-const EVEN_MAP = {};
+const EVEN_MAP: Record<string, number> = {};
 for (let i = 0; i < 10; i++) EVEN_MAP[String(i)] = i;
 for (let i = 0; i < 26; i++) EVEN_MAP[String.fromCharCode(65 + i)] = i;
 
-const ODD_MAP = {
+const ODD_MAP: Record<string, number> = {
   '0': 1,  '1': 0,  '2': 5,  '3': 7,  '4': 9,
   '5': 13, '6': 15, '7': 17, '8': 19, '9': 21,
   A: 1,  B: 0,  C: 5,  D: 7,  E: 9,
@@ -31,7 +31,7 @@ const CHECK_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function computeCheckChar(first15) {
+function computeCheckChar(first15: string): string {
   let sum = 0;
   for (let i = 0; i < 15; i++) {
     const ch = first15[i];
@@ -45,15 +45,15 @@ function computeCheckChar(first15) {
   return CHECK_LETTERS[sum % 26];
 }
 
-function extractConsonants(str) {
+function extractConsonants(str: string): string[] {
   return str.replace(/[^A-Z]/g, '').split('').filter(c => !'AEIOU'.includes(c));
 }
 
-function extractVowels(str) {
+function extractVowels(str: string): string[] {
   return str.replace(/[^A-Z]/g, '').split('').filter(c => 'AEIOU'.includes(c));
 }
 
-function encodeSurname(surname) {
+function encodeSurname(surname: string): string {
   const s = surname.toUpperCase();
   const cons = extractConsonants(s);
   const vow = extractVowels(s);
@@ -61,7 +61,7 @@ function encodeSurname(surname) {
   return pool.slice(0, 3).join('');
 }
 
-function encodeName(name) {
+function encodeName(name: string): string {
   const n = name.toUpperCase();
   const cons = extractConsonants(n);
   if (cons.length > 3) {
@@ -72,11 +72,46 @@ function encodeName(name) {
   return pool.slice(0, 3).join('');
 }
 
+// ── Interfaces ───────────────────────────────────────────────────────
+
+interface HandlerInput {
+  codice_fiscale: string
+  nome?: string
+  cognome?: string
+  data_nascita?: string
+  counterpart_id?: string
+  employee_id?: string
+}
+
+interface Extracted {
+  surname_code: string
+  name_code: string
+  birth_year: string
+  birth_month: number | null
+  birth_day: number
+  gender: string
+  municipality_code: string
+}
+
+interface Matches {
+  surname: boolean | null
+  name: boolean | null
+  birth_date: boolean | null
+}
+
+interface HandlerResult {
+  valid: boolean
+  checksum_ok: boolean
+  extracted: Extracted | null
+  matches: Matches
+  errors: string[]
+}
+
 // ── Main handler ─────────────────────────────────────────────────────
 
-async function handler(input) {
+async function handler(input: HandlerInput): Promise<HandlerResult> {
   const { codice_fiscale, nome, cognome, data_nascita, counterpart_id, employee_id } = input;
-  const errors = [];
+  const errors: string[] = [];
 
   // 1. Format validation
   if (!codice_fiscale || typeof codice_fiscale !== 'string') {
@@ -127,13 +162,13 @@ async function handler(input) {
   const birthDayRaw = parseInt(cf.slice(9, 11), 10);
   const municipalityCode = cf.slice(11, 15);
 
-  const birthMonth = MONTH_CODES[birthMonthLetter];
+  const birthMonth: number | undefined = MONTH_CODES[birthMonthLetter];
   if (!birthMonth) {
     errors.push(`Invalid month code: ${birthMonthLetter}`);
   }
 
-  let gender;
-  let birthDay;
+  let gender: string;
+  let birthDay: number;
   if (birthDayRaw > 40) {
     gender = 'F';
     birthDay = birthDayRaw - 40;
@@ -146,7 +181,7 @@ async function handler(input) {
     errors.push(`Invalid birth day: ${birthDay}`);
   }
 
-  const extracted = {
+  const extracted: Extracted = {
     surname_code: surnameCode,
     name_code: nameCode,
     birth_year: birthYear,
@@ -157,7 +192,7 @@ async function handler(input) {
   };
 
   // 4. Match against provided data
-  const matches = {
+  const matches: Matches = {
     surname: null,
     name: null,
     birth_date: null,
@@ -195,11 +230,11 @@ async function handler(input) {
 
   const valid = checksumOk && errors.length === 0;
 
-  const result = { valid, checksum_ok: checksumOk, extracted, matches, errors };
+  const result: HandlerResult = { valid, checksum_ok: checksumOk, extracted, matches, errors };
 
   // 5. Persist to Supabase
   const allMatch = [matches.surname, matches.name, matches.birth_date]
-    .filter(v => v !== null);
+    .filter((v): v is boolean => v !== null);
   const fiscalCodeMatch = allMatch.length > 0 ? allMatch.every(Boolean) : null;
 
   if (counterpart_id) {
@@ -213,7 +248,7 @@ async function handler(input) {
   }
 
   if (employee_id) {
-    const updateData = {
+    const updateData: Record<string, unknown> = {
       fiscal_code_valid: valid,
       updated_at: isoNow(),
     };
@@ -230,18 +265,18 @@ async function handler(input) {
 }
 
 // CLI entry point
-async function main() {
+async function main(): Promise<void> {
   try {
     let raw = '';
     for await (const chunk of process.stdin) {
       raw += chunk;
     }
-    const input = JSON.parse(raw);
+    const input: HandlerInput = JSON.parse(raw);
     const result = await handler(input);
     console.log(JSON.stringify(result));
     process.exit(0);
-  } catch (err) {
-    console.log(JSON.stringify({ error: err.message }));
+  } catch (err: unknown) {
+    console.log(JSON.stringify({ error: (err as Error).message }));
     process.exit(1);
   }
 }

@@ -1,6 +1,6 @@
-#!/usr/bin/env node
-import { supabase } from '../../_shared/supabase-client.js';
-import { callInference, parseInferenceJSON, isoNow } from '../../_shared/utils.js';
+#!/usr/bin/env -S node --experimental-strip-types
+import { supabase } from '../../_shared/supabase-client.ts'
+import { callInference, parseInferenceJSON, isoNow } from '../../_shared/utils.ts'
 
 const MAX_TEXT_LENGTH = 12000;
 
@@ -68,10 +68,102 @@ Rispondi ESCLUSIVAMENTE con un JSON valido:
   }
 }`;
 
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+interface HandlerInput {
+  text: string
+  contract_id: string
+  company_id: string
+}
+
+interface ExtractedDates {
+  start_date: string | null
+  end_date: string | null
+  signing_date: string | null
+  notice_period_days: number | null
+}
+
+interface ExtractedValue {
+  total_value: number | null
+  currency: string
+  payment_terms_days: number | null
+  payment_method: string | null
+}
+
+interface ExtractedRenewal {
+  auto_renewal: boolean
+  renewal_notice_days: number | null
+  max_renewals: number | null
+  renewal_duration_months: number | null
+}
+
+interface ExtractedClause {
+  clause_type: string
+  title: string | null
+  summary_it: string | null
+  risk_level: string
+  risk_reason: string | null
+  original_text: string | null
+}
+
+interface ExtractedObligation {
+  description: string | null
+  responsible_party: string | null
+  deadline: string | null
+  recurring: boolean
+  frequency: string | null
+}
+
+interface ExtractedMilestone {
+  title: string | null
+  due_date: string | null
+  amount: number | null
+  description: string | null
+}
+
+interface ExtractedScopeItem {
+  description: string | null
+  included: boolean
+}
+
+interface CounterpartIdentifiers {
+  name: string
+  vat: string
+  cf: string
+  address: string
+  legal_representative: string
+}
+
+interface Extraction {
+  dates: ExtractedDates | null
+  value: ExtractedValue | null
+  renewal: ExtractedRenewal | null
+  clauses: ExtractedClause[]
+  obligations: ExtractedObligation[]
+  milestones: ExtractedMilestone[]
+  scope_items: ExtractedScopeItem[]
+  counterpart_identifiers: CounterpartIdentifiers | null
+}
+
+interface HandlerResult {
+  dates: ExtractedDates | null
+  value: ExtractedValue | null
+  renewal: ExtractedRenewal | null
+  clauses: ExtractedClause[]
+  obligations: ExtractedObligation[]
+  milestones: ExtractedMilestone[]
+  scope_items: ExtractedScopeItem[]
+  counterpart_identifiers: CounterpartIdentifiers | null
+  error?: string
+  write_errors?: string[]
+}
+
 /**
  * Persist extracted clauses to the clauses table.
  */
-async function insertClauses(contractId, companyId, clauses) {
+async function insertClauses(contractId: string, companyId: string, clauses: ExtractedClause[]): Promise<void> {
   if (!clauses?.length) return;
 
   const now = isoNow();
@@ -94,7 +186,7 @@ async function insertClauses(contractId, companyId, clauses) {
 /**
  * Persist extracted obligations to the obligations table.
  */
-async function insertObligations(contractId, companyId, obligations) {
+async function insertObligations(contractId: string, companyId: string, obligations: ExtractedObligation[]): Promise<void> {
   if (!obligations?.length) return;
 
   const now = isoNow();
@@ -116,7 +208,7 @@ async function insertObligations(contractId, companyId, obligations) {
 /**
  * Persist extracted milestones to the milestones table.
  */
-async function insertMilestones(contractId, companyId, milestones) {
+async function insertMilestones(contractId: string, companyId: string, milestones: ExtractedMilestone[]): Promise<void> {
   if (!milestones?.length) return;
 
   const now = isoNow();
@@ -137,7 +229,7 @@ async function insertMilestones(contractId, companyId, milestones) {
 /**
  * Persist extracted scope items to the scope_items table.
  */
-async function insertScopeItems(contractId, companyId, scopeItems) {
+async function insertScopeItems(contractId: string, companyId: string, scopeItems: ExtractedScopeItem[]): Promise<void> {
   if (!scopeItems?.length) return;
 
   const now = isoNow();
@@ -156,10 +248,10 @@ async function insertScopeItems(contractId, companyId, scopeItems) {
 /**
  * Update the contracts row with extracted dates, value, and renewal info.
  */
-async function updateContract(contractId, extraction) {
+async function updateContract(contractId: string, extraction: Extraction): Promise<void> {
   const { dates, value, renewal } = extraction;
 
-  const updates = {
+  const updates: Record<string, unknown> = {
     start_date: dates?.start_date || null,
     end_date: dates?.end_date || null,
     signing_date: dates?.signing_date || null,
@@ -182,11 +274,8 @@ async function updateContract(contractId, extraction) {
 
 /**
  * Extract structured data from a classified Italian contract via AI inference.
- *
- * @param {{ text: string, contract_id: string, company_id: string }} input
- * @returns {Promise<object>} Extraction result
  */
-async function handler(input) {
+async function handler(input: HandlerInput): Promise<HandlerResult> {
   const { text, contract_id, company_id } = input;
 
   if (!text) throw new Error('Missing required field: text');
@@ -197,13 +286,13 @@ async function handler(input) {
     ? text.slice(0, MAX_TEXT_LENGTH)
     : text;
 
-  let extraction;
+  let extraction: Extraction;
   try {
     const raw = await callInference(SYSTEM_PROMPT, userMessage, {
       maxTokens: 4096,
     });
-    extraction = parseInferenceJSON(raw);
-  } catch (err) {
+    extraction = parseInferenceJSON(raw) as Extraction;
+  } catch (err: unknown) {
     return {
       dates: null,
       value: null,
@@ -213,44 +302,44 @@ async function handler(input) {
       milestones: [],
       scope_items: [],
       counterpart_identifiers: null,
-      error: `Inference failed: ${err.message}`,
+      error: `Inference failed: ${(err as Error).message}`,
     };
   }
 
   // --- Persist to Supabase (all scoped to company_id) ---
-  const writeErrors = [];
+  const writeErrors: string[] = [];
 
   try {
     await updateContract(contract_id, extraction);
-  } catch (err) {
-    writeErrors.push(err.message);
+  } catch (err: unknown) {
+    writeErrors.push((err as Error).message);
   }
 
   try {
     await insertClauses(contract_id, company_id, extraction.clauses);
-  } catch (err) {
-    writeErrors.push(err.message);
+  } catch (err: unknown) {
+    writeErrors.push((err as Error).message);
   }
 
   try {
     await insertObligations(contract_id, company_id, extraction.obligations);
-  } catch (err) {
-    writeErrors.push(err.message);
+  } catch (err: unknown) {
+    writeErrors.push((err as Error).message);
   }
 
   try {
     await insertMilestones(contract_id, company_id, extraction.milestones);
-  } catch (err) {
-    writeErrors.push(err.message);
+  } catch (err: unknown) {
+    writeErrors.push((err as Error).message);
   }
 
   try {
     await insertScopeItems(contract_id, company_id, extraction.scope_items);
-  } catch (err) {
-    writeErrors.push(err.message);
+  } catch (err: unknown) {
+    writeErrors.push((err as Error).message);
   }
 
-  const result = {
+  const result: HandlerResult = {
     dates: extraction.dates || null,
     value: extraction.value || null,
     renewal: extraction.renewal || null,
@@ -269,18 +358,18 @@ async function handler(input) {
 }
 
 // CLI entry point
-async function main() {
+async function main(): Promise<void> {
   try {
     let raw = '';
     for await (const chunk of process.stdin) {
       raw += chunk;
     }
-    const input = JSON.parse(raw);
+    const input: HandlerInput = JSON.parse(raw);
     const result = await handler(input);
     console.log(JSON.stringify(result));
     process.exit(0);
-  } catch (err) {
-    console.log(JSON.stringify({ error: err.message }));
+  } catch (err: unknown) {
+    console.log(JSON.stringify({ error: (err as Error).message }));
     process.exit(1);
   }
 }

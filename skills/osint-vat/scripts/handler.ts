@@ -1,7 +1,7 @@
-#!/usr/bin/env node
-import { supabase } from '../../_shared/supabase-client.js';
-import { getCached, setCache } from '../../_shared/cache.js';
-import { isoNow } from '../../_shared/utils.js';
+#!/usr/bin/env -S node --experimental-strip-types
+import { supabase } from '../../_shared/supabase-client.ts'
+import { getCached, setCache } from '../../_shared/cache.ts'
+import { isoNow } from '../../_shared/utils.ts'
 
 const VIES_API = 'https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number';
 const CACHE_TTL_MINUTES = 43200; // 30 days
@@ -13,13 +13,50 @@ const EU_COUNTRY_CODES = new Set([
   'NL', 'PL', 'PT', 'RO', 'SE', 'SI', 'SK', 'XI',
 ]);
 
+interface ParsedVat {
+  countryCode: string
+  vatNumber: string
+}
+
+interface ViesResult {
+  isValid?: boolean
+  countryCode?: string
+  vatNumber?: string
+  name?: string
+  address?: string
+  requestDate?: string
+  userError?: string
+}
+
+interface HandlerInput {
+  vat_number: string
+  country_code?: string
+  counterpart_id?: string
+}
+
+interface HandlerResult {
+  valid: boolean | null
+  country_code: string
+  vat_number: string
+  name: string | null
+  address: string | null
+  request_date: string
+  cached: boolean
+  error: string | null
+}
+
+interface VerificationJson {
+  vies?: ViesResult & { checked_at?: string }
+  [key: string]: unknown
+}
+
 /**
  * Parse a VAT string into { countryCode, vatNumber }.
  * Strips whitespace, detects 2-letter alpha prefix.
  */
-function parseVat(raw, explicitCountry) {
+function parseVat(raw: string, explicitCountry?: string): ParsedVat {
   const cleaned = raw.replace(/\s+/g, '').toUpperCase();
-  let countryCode = explicitCountry?.toUpperCase() || null;
+  let countryCode: string | null = explicitCountry?.toUpperCase() || null;
   let vatNumber = cleaned;
 
   const prefixMatch = cleaned.match(/^([A-Z]{2})(\d.*)$/);
@@ -39,7 +76,7 @@ function parseVat(raw, explicitCountry) {
 /**
  * Call the VIES REST API with a 5-second timeout.
  */
-async function callVies(countryCode, vatNumber) {
+async function callVies(countryCode: string, vatNumber: string): Promise<ViesResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
 
@@ -55,7 +92,7 @@ async function callVies(countryCode, vatNumber) {
       throw new Error(`VIES HTTP ${res.status}`);
     }
 
-    return await res.json();
+    return await res.json() as ViesResult;
   } finally {
     clearTimeout(timeout);
   }
@@ -64,7 +101,7 @@ async function callVies(countryCode, vatNumber) {
 /**
  * Update the counterparts row with VIES verification results.
  */
-async function updateCounterpart(counterpartId, viesResult) {
+async function updateCounterpart(counterpartId: string, viesResult: ViesResult): Promise<void> {
   const { data: existing, error: readErr } = await supabase
     .from('counterparts')
     .select('verification_json')
@@ -78,7 +115,7 @@ async function updateCounterpart(counterpartId, viesResult) {
   // Fixed score based on result — avoids read-modify-write race on score_legal
   const newScoreLegal = viesResult.isValid ? 10 : 0;
 
-  const verificationJson = existing?.verification_json ?? {};
+  const verificationJson: VerificationJson = (existing?.verification_json as VerificationJson) ?? {};
   verificationJson.vies = {
     ...viesResult,
     checked_at: isoNow(),
@@ -101,11 +138,8 @@ async function updateCounterpart(counterpartId, viesResult) {
 
 /**
  * Validate an EU VAT number via VIES.
- *
- * @param {{ vat_number: string, country_code?: string, counterpart_id?: string }} input
- * @returns {Promise<object>}
  */
-async function handler(input) {
+async function handler(input: HandlerInput): Promise<HandlerResult> {
   const { vat_number, country_code, counterpart_id } = input;
 
   if (!vat_number) throw new Error('Missing required field: vat_number');
@@ -135,15 +169,15 @@ async function handler(input) {
       CACHE_TTL_MINUTES,
     );
 
-    if (cached?.verification_json?.vies) {
-      const vies = cached.verification_json.vies;
+    if ((cached as Record<string, unknown> & { verification_json?: VerificationJson })?.verification_json?.vies) {
+      const vies = (cached as Record<string, unknown> & { verification_json: VerificationJson }).verification_json.vies!;
       return {
         valid: vies.isValid ?? null,
         country_code: vies.countryCode ?? countryCode,
         vat_number: vies.vatNumber ?? vatNumber,
         name: vies.name ?? null,
         address: vies.address ?? null,
-        request_date: vies.requestDate ?? vies.checked_at,
+        request_date: vies.requestDate ?? vies.checked_at ?? isoNow(),
         cached: true,
         error: null,
       };
@@ -151,11 +185,11 @@ async function handler(input) {
   }
 
   // --- Call VIES API ---
-  let viesResult;
+  let viesResult: ViesResult;
   try {
     viesResult = await callVies(countryCode, vatNumber);
-  } catch (err) {
-    const errorMsg = err.name === 'AbortError'
+  } catch (err: unknown) {
+    const errorMsg = (err as Error).name === 'AbortError'
       ? 'VIES API timeout'
       : 'VIES API unavailable';
 
@@ -193,18 +227,18 @@ async function handler(input) {
 }
 
 // CLI entry point
-async function main() {
+async function main(): Promise<void> {
   try {
     let raw = '';
     for await (const chunk of process.stdin) {
       raw += chunk;
     }
-    const input = JSON.parse(raw);
+    const input: HandlerInput = JSON.parse(raw);
     const result = await handler(input);
     console.log(JSON.stringify(result));
     process.exit(0);
-  } catch (err) {
-    console.log(JSON.stringify({ error: err.message }));
+  } catch (err: unknown) {
+    console.log(JSON.stringify({ error: (err as Error).message }));
     process.exit(1);
   }
 }

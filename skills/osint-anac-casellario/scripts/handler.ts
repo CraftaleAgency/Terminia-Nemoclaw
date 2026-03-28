@@ -1,7 +1,7 @@
-#!/usr/bin/env node
-import { supabase } from '../../_shared/supabase-client.js';
-import { getCached } from '../../_shared/cache.js';
-import { isoNow } from '../../_shared/utils.js';
+#!/usr/bin/env -S node --experimental-strip-types
+import { supabase } from '../../_shared/supabase-client.ts'
+import { getCached } from '../../_shared/cache.ts'
+import { isoNow } from '../../_shared/utils.ts'
 
 const SEARCH_URL = 'https://casellario.anticorruzione.it/CasellarioSearch/Search';
 const BASE_URL = 'https://casellario.anticorruzione.it';
@@ -10,10 +10,58 @@ const REQUEST_TIMEOUT_MS = 8000;
 const USER_AGENT = 'Mozilla/5.0 (compatible; Terminia/1.0)';
 
 // ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+interface Annotation {
+  type: string
+  date: string | null
+  description: string
+  reference: string
+}
+
+interface ErrorResult {
+  checked: false
+  annotations_found: false
+  annotations: Annotation[]
+  source_url: string
+  checked_at: string
+  error: string
+}
+
+interface SuccessResult {
+  checked: true
+  annotations_found: boolean
+  annotations: Annotation[]
+  source_url: string
+  checked_at: string
+  error: null
+}
+
+type AnacResult = ErrorResult | SuccessResult
+
+interface ParseResult {
+  ok: boolean
+  annotations: Annotation[]
+  error?: string
+}
+
+interface HandlerInput {
+  vat_number?: string
+  company_name?: string
+  counterpart_id?: string
+}
+
+interface VerificationJson {
+  anac?: AnacResult & { cached?: boolean }
+  [key: string]: unknown
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeErrorResult(errorCode) {
+function makeErrorResult(errorCode: string): ErrorResult {
   return {
     checked: false,
     annotations_found: false,
@@ -24,7 +72,7 @@ function makeErrorResult(errorCode) {
   };
 }
 
-function makeSuccessResult(annotations, sourceUrl) {
+function makeSuccessResult(annotations: Annotation[], sourceUrl: string): SuccessResult {
   return {
     checked: true,
     annotations_found: annotations.length > 0,
@@ -38,7 +86,7 @@ function makeSuccessResult(annotations, sourceUrl) {
 /**
  * Fetch with an AbortController timeout.
  */
-async function timedFetch(url, options = {}) {
+async function timedFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -54,12 +102,12 @@ async function timedFetch(url, options = {}) {
 // ---------------------------------------------------------------------------
 
 /** Strip HTML tags for plain-text extraction. */
-function stripTags(html) {
+function stripTags(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /** Decode common HTML entities. */
-function decodeEntities(text) {
+function decodeEntities(text: string): string {
   return text
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -72,7 +120,7 @@ function decodeEntities(text) {
 /**
  * Classify an annotation string into a known type.
  */
-function classifyAnnotation(text) {
+function classifyAnnotation(text: string): string {
   const lower = text.toLowerCase();
   if (/esclusione|esclus[ao]|interdizione|interdi[ct]/.test(lower)) return 'esclusione';
   if (/falsa dichiarazione|falsa\s+dichiaraz/.test(lower)) return 'falsa_dichiarazione';
@@ -84,7 +132,7 @@ function classifyAnnotation(text) {
  * Try to extract a date in DD/MM/YYYY or YYYY-MM-DD format from a string.
  * Returns ISO YYYY-MM-DD or null.
  */
-function extractDate(text) {
+function extractDate(text: string): string | null {
   const dmy = text.match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
 
@@ -105,8 +153,8 @@ function extractDate(text) {
  *
  * Returns { ok: boolean, annotations: object[], error?: string }
  */
-function parseAnnotations(html) {
-  const noResultPatterns = [
+function parseAnnotations(html: string): ParseResult {
+  const noResultPatterns: RegExp[] = [
     /nessun\s+risultato/i,
     /0\s+risultat/i,
     /nessuna\s+annotazione/i,
@@ -122,12 +170,12 @@ function parseAnnotations(html) {
   }
 
   // Look for a results table — try multiple patterns
-  const annotations = [];
+  const annotations: Annotation[] = [];
 
   // Pattern A: standard HTML table rows
   const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-  let rowMatch;
+  let rowMatch: RegExpExecArray | null;
   let dataRowCount = 0;
 
   while ((rowMatch = rowRe.exec(html)) !== null) {
@@ -135,8 +183,8 @@ function parseAnnotations(html) {
     // Skip header rows
     if (/<th[\s>]/i.test(rowHtml)) continue;
 
-    const cells = [];
-    let cellMatch;
+    const cells: string[] = [];
+    let cellMatch: RegExpExecArray | null;
     cellRe.lastIndex = 0;
     while ((cellMatch = cellRe.exec(rowHtml)) !== null) {
       cells.push(decodeEntities(stripTags(cellMatch[1])));
@@ -166,7 +214,7 @@ function parseAnnotations(html) {
 
   // Pattern B: <div> or <li> based results
   const itemRe = /<(?:li|div)[^>]*class="[^"]*(?:result|annotation|record)[^"]*"[^>]*>([\s\S]*?)<\/(?:li|div)>/gi;
-  let itemMatch;
+  let itemMatch: RegExpExecArray | null;
   while ((itemMatch = itemRe.exec(html)) !== null) {
     const text = decodeEntities(stripTags(itemMatch[1]));
     if (text.length < 5) continue;
@@ -205,7 +253,7 @@ function parseAnnotations(html) {
 // Supabase counterpart update
 // ---------------------------------------------------------------------------
 
-async function updateCounterpart(counterpartId, result) {
+async function updateCounterpart(counterpartId: string, result: AnacResult): Promise<void> {
   const { data: existing, error: readErr } = await supabase
     .from('counterparts')
     .select('verification_json')
@@ -216,10 +264,10 @@ async function updateCounterpart(counterpartId, result) {
     throw new Error(`Failed to read counterpart ${counterpartId}: ${readErr.message}`);
   }
 
-  const verificationJson = existing?.verification_json ?? {};
+  const verificationJson: VerificationJson = (existing?.verification_json as VerificationJson) ?? {};
   verificationJson.anac = { ...result };
 
-  const updates = {
+  const updates: Record<string, unknown> = {
     has_anac_annotations: result.annotations_found,
     verification_json: verificationJson,
     reliability_updated_at: isoNow(),
@@ -246,11 +294,8 @@ async function updateCounterpart(counterpartId, result) {
 
 /**
  * Check ANAC Casellario Informatico for supplier annotations.
- *
- * @param {{ vat_number: string, company_name: string, counterpart_id?: string }} input
- * @returns {Promise<object>}
  */
-async function handler(input) {
+async function handler(input: HandlerInput): Promise<AnacResult & { cached?: boolean }> {
   const { vat_number, company_name, counterpart_id } = input;
 
   if (!vat_number && !company_name) {
@@ -267,8 +312,8 @@ async function handler(input) {
       CACHE_TTL_MINUTES,
     );
 
-    if (cached?.verification_json?.anac) {
-      return { ...cached.verification_json.anac, cached: true };
+    if ((cached as Record<string, unknown> & { verification_json?: VerificationJson })?.verification_json?.anac) {
+      return { ...(cached as Record<string, unknown> & { verification_json: VerificationJson }).verification_json.anac!, cached: true };
     }
   }
 
@@ -281,7 +326,7 @@ async function handler(input) {
   const sourceUrl = `${SEARCH_URL}?${searchParams.toString()}`;
 
   // --- Fetch search results ---
-  let html;
+  let html: string;
   try {
     const res = await timedFetch(sourceUrl, {
       headers: {
@@ -299,8 +344,8 @@ async function handler(input) {
     }
 
     html = await res.text();
-  } catch (err) {
-    const errorCode = err.name === 'AbortError' ? 'anac_timeout' : 'anac_unavailable';
+  } catch (err: unknown) {
+    const errorCode = (err as Error).name === 'AbortError' ? 'anac_timeout' : 'anac_unavailable';
     const result = makeErrorResult(errorCode);
     await safeUpdateCounterpart(counterpart_id, result);
     return result;
@@ -326,7 +371,7 @@ async function handler(input) {
 /**
  * Non-fatal wrapper around updateCounterpart.
  */
-async function safeUpdateCounterpart(counterpartId, result) {
+async function safeUpdateCounterpart(counterpartId: string | undefined, result: AnacResult): Promise<void> {
   if (!counterpartId) return;
   try {
     await updateCounterpart(counterpartId, result);
@@ -336,18 +381,18 @@ async function safeUpdateCounterpart(counterpartId, result) {
 }
 
 // CLI entry point
-async function main() {
+async function main(): Promise<void> {
   try {
     let raw = '';
     for await (const chunk of process.stdin) {
       raw += chunk;
     }
-    const input = JSON.parse(raw);
+    const input: HandlerInput = JSON.parse(raw);
     const result = await handler(input);
     console.log(JSON.stringify(result));
     process.exit(0);
-  } catch (err) {
-    console.log(JSON.stringify({ error: err.message }));
+  } catch (err: unknown) {
+    console.log(JSON.stringify({ error: (err as Error).message }));
     process.exit(1);
   }
 }
