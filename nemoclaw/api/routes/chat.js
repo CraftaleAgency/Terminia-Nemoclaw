@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import supabase from '../lib/supabase.js'
-import { chatCompletionStream } from '../lib/inference.js'
+import { chatCompletion, chatCompletionStream } from '../lib/inference.js'
 
 const router = Router()
 
@@ -22,7 +22,7 @@ Regole:
 - Usa formato markdown per strutturare le risposte`
 
 router.post('/', async (req, res) => {
-  const { messages, company_id } = req.body
+  const { messages, company_id, stream } = req.body
 
   if (!messages?.length) {
     return res.status(400).json({ error: 'messages è obbligatorio' })
@@ -51,7 +51,17 @@ router.post('/', async (req, res) => {
     ...messages,
   ]
 
-  // SSE streaming response
+  // Non-streaming: return plain JSON response
+  if (stream === false) {
+    try {
+      const content = await chatCompletion({ messages: fullMessages })
+      return res.json({ content })
+    } catch (err) {
+      return res.status(502).json({ error: err.message })
+    }
+  }
+
+  // SSE streaming response (default)
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
