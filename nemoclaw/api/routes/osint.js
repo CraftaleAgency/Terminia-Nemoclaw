@@ -1,3 +1,6 @@
+/** @typedef {import('../types.js').VerifyOSINTRequest} VerifyOSINTRequest */
+/** @typedef {import('../types.js').VerifyOSINTResponse} VerifyOSINTResponse */
+
 import { Router } from 'express'
 import supabase from '../lib/supabase.js'
 
@@ -314,6 +317,11 @@ function computeReliabilityScore(vies, cf, anac) {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
+/**
+ * Verify a counterpart via VIES, fiscal code, and ANAC checks.
+ * @param {import('express').Request<{}, VerifyOSINTResponse, VerifyOSINTRequest>} req
+ * @param {import('express').Response<VerifyOSINTResponse>} res
+ */
 router.post('/', async (req, res) => {
   const { vat_number, fiscal_code, company_name, counterpart_id } = req.body
 

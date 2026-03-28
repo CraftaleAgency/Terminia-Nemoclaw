@@ -1,3 +1,6 @@
+/** @typedef {import('../types.js').AnalyzeContractRequest} AnalyzeContractRequest */
+/** @typedef {import('../types.js').AnalyzeContractResponse} AnalyzeContractResponse */
+
 import { Router } from 'express'
 import supabase from '../lib/supabase.js'
 import { chatCompletion, parseInferenceJSON } from '../lib/inference.js'
@@ -184,6 +187,11 @@ async function findOrCreateCounterpart(companyId, cp) {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
+/**
+ * Analyze a contract: classify, extract data, and score risk.
+ * @param {import('express').Request<{}, AnalyzeContractResponse, AnalyzeContractRequest>} req
+ * @param {import('express').Response<AnalyzeContractResponse>} res
+ */
 router.post('/', async (req, res) => {
   const { document_text, document_base64, content_type, company_id, contract_id } = req.body
 

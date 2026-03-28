@@ -1,3 +1,7 @@
+/** @typedef {import('../types.js').ChatRequest} ChatRequest */
+/** @typedef {import('../types.js').ChatResponse} ChatResponse */
+/** @typedef {import('../types.js').ChatStreamChunk} ChatStreamChunk */
+
 import { Router } from 'express'
 import supabase from '../lib/supabase.js'
 import { chatCompletion, chatCompletionStream } from '../lib/inference.js'
@@ -21,6 +25,11 @@ Regole:
 - Non inventare dati o numeri
 - Usa formato markdown per strutturare le risposte`
 
+/**
+ * Chat with Terminia AI assistant (supports SSE streaming).
+ * @param {import('express').Request<{}, ChatResponse, ChatRequest>} req
+ * @param {import('express').Response<ChatResponse>} res
+ */
 router.post('/', async (req, res) => {
   const { messages, company_id, stream } = req.body
 

@@ -1,3 +1,6 @@
+/** @typedef {import('../types.js').OCRRequest} OCRRequest */
+/** @typedef {import('../types.js').OCRResponse} OCRResponse */
+
 import { Router } from 'express'
 import multer from 'multer'
 import { chatCompletion } from '../lib/inference.js'
@@ -9,6 +12,11 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 })
 
+/**
+ * Extract text from an image or document via OCR.
+ * @param {import('express').Request<{}, OCRResponse, OCRRequest>} req
+ * @param {import('express').Response<OCRResponse>} res
+ */
 router.post('/', upload.single('file'), async (req, res) => {
   let imageUrl
 
