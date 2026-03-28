@@ -87,10 +87,10 @@ services:
         ports:
             - "${VISION_PORT:-8085}:8080"
         volumes:
-            - ${VISION_MODEL_PATH}:/models:ro
+            - /home/ppezz/models/qwen25-vl:/models:ro
         command:
             - --model
-            - /models/${VISION_MODEL_FILE}
+            - /models/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
             - --ctx-size
             - "${VISION_CTX_SIZE:-8192}"
             - --host
