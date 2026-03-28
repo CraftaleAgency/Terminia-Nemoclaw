@@ -13,6 +13,7 @@ OpenClaw agent (sandbox)
   → litellm-proxy:4000
   → llama-server-orchestrator:8080 (Nemotron-8B, port 8083)
   → llama-server-worker:8080 (Nemotron-Nano-4B, port 8084)
+  → llama-server-ocr:8080 (NuMarkdown-8B, port 8086)
 ```
 
 Both stacks share `llmserver-ai-network` (172.28.0.0/16) and attach to `dokploy-network` (Traefik). The network **must exist before deploying either stack** — create it with `./nebula/create-network.sh`.
@@ -35,6 +36,7 @@ cd ../nemoclaw && docker compose up -d && ./setup.sh  # gateway + CLI + sandbox
 curl http://localhost:8083/health   # orchestrator
 curl http://localhost:8084/health   # worker
 curl http://localhost:4000/health   # litellm-proxy
+curl http://localhost:8086/health   # OCR (NuMarkdown)
 curl http://localhost:8082/health   # nemoclaw gateway
 ```
 
@@ -58,6 +60,7 @@ Each stack has its own `.env` (gitignored). Copy from `.env.example`:
 LiteLLM model routing is defined in `nebula/litellm-config.yaml`. Model aliases:
 - `default` / `nemotron-orchestrator` → orchestrator (8083)
 - `nemotron-nano` / `fast` → worker (8084)
+- `numarkdown` / `ocr` → OCR (8086)
 
 ## Sandbox Security Policy
 
@@ -85,6 +88,7 @@ Host path: `/home/ppezz/models/`
 |-----------|------|
 | `nemotron-orchestrator/` | `orchestrator-8b-claude-4.5-opus-distill.q4_k_m.gguf` |
 | `nemotron-nano-worker/` | `NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf` |
+| `numarkdown/` | `NuMarkdown-8B-Thinking.Q4_K_M.gguf` + `mmproj-Q8_0.gguf` |
 
 ## External Access
 
@@ -104,10 +108,14 @@ Agent skills live in `skills/` and are deployed to the sandbox at `/sandbox/.ope
 - `cache.js` — `getCached(table, key, value, tsColumn, ttlMinutes)` / `setCache(table, data, conflictCol)` for API result caching in Supabase
 - `utils.js` — `callInference(system, user, opts)` for LLM calls via `inference.local`, `parseInferenceJSON()`, `computeReliabilityScore()`, `computeMatchScore()`, score helpers
 
+### Document preprocessing
+- **document-preprocessor** — Multi-format input (text, PDF, DOCX, images). Routes scanned docs through NuMarkdown OCR
+
 ### Contract pipeline (sequential)
-1. **contract-classify** — PDF text → contract type + party identification via inference
-2. **contract-extract** — Deep extraction: clauses, obligations, milestones, scope, counterpart IDs
-3. **contract-risk-score** — Rules engine + inference scoring (0-100), alert generation
+1. **document-preprocessor** — Convert any format to clean text
+2. **contract-classify** — PDF text → contract type + party identification via inference
+3. **contract-extract** — Deep extraction: clauses, obligations, milestones, scope, counterpart IDs
+4. **contract-risk-score** — Rules engine + inference scoring (0-100), alert generation
 
 ### OSINT skills (triggered by contract pipeline)
 - **osint-cf** — Local Italian Codice Fiscale validation (pure algorithm, no API)
@@ -121,9 +129,13 @@ Agent skills live in `skills/` and are deployed to the sandbox at `/sandbox/.ope
 
 ### Skill development conventions
 - ES module syntax (`import`/`export`)
-- Each handler exports `async handler(input)` returning a result object
+- Each handler is a CLI script: reads JSON from stdin, writes JSON to stdout, exits 0/1
+- Handlers live in `scripts/handler.js` within each skill folder
+- All handlers have `#!/usr/bin/env node` shebang and are executable
 - Use `callInference()` from `_shared/utils.js` for all LLM calls (routes through `inference.local`)
 - Italian-first prompts for contract analysis; structured JSON output
 - All DB access via Supabase service role key — never expose to frontend
 - Cache external API results in Supabase with TTL to minimize calls
 - Graceful degradation: return partial results with `error` field on failure
+
+For full architecture details, see `docs/architecture.md`.
