@@ -1,0 +1,44 @@
+services:
+    # OpenShell Gateway — core runtime that manages NemoClaw sandboxes.
+    # Sandboxes are created by the gateway (via nemoclaw CLI), not as compose services.
+    # See: https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html
+    openshell-gateway:
+        image: ghcr.io/nvidia/openshell/cluster:0.0.16
+        container_name: openshell-gateway
+        restart: unless-stopped
+        privileged: true
+        pid: host
+        ports:
+            - "8082:30051"
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - nemoclaw-data:/root/.nemoclaw
+            - openshell-data:/root/.openshell
+            - sandbox-data:/sandbox
+        environment:
+            - OPENSHELL_GATEWAY=terminia-gateway
+            - OPENSHELL_PORT=30051
+        networks:
+            - llmserver-ai-network
+            - dokploy-network
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:30051/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 60s
+
+networks:
+    llmserver-ai-network:
+        name: llmserver-ai-network
+        external: true
+    dokploy-network:
+        external: true
+
+volumes:
+    nemoclaw-data:
+        driver: local
+    openshell-data:
+        driver: local
+    sandbox-data:
+        driver: local

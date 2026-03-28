@@ -1,0 +1,81 @@
+# NemoClaw network + filesystem policy for Terminia sandbox.
+# Deny-by-default: only listed endpoints are allowed.
+# Operator approval via `openshell term` for unlisted requests.
+# Ref: https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html
+
+filesystem:
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+
+network:
+  # Inference — routed through OpenShell gateway to litellm-proxy
+  - name: inference
+    endpoints:
+      - inference.local:443
+    binaries:
+      - /usr/local/bin/openclaw
+    rules:
+      - methods: ["ALL"]
+
+  # GitHub access for agent operations
+  - name: github
+    endpoints:
+      - github.com:443
+    binaries:
+      - /usr/bin/gh
+      - /usr/bin/git
+    rules:
+      - methods: ["ALL"]
+
+  - name: github_rest_api
+    endpoints:
+      - api.github.com:443
+    binaries:
+      - /usr/bin/gh
+    rules:
+      - methods: ["GET", "POST", "PATCH", "PUT", "DELETE"]
+
+  # OpenClaw ecosystem
+  - name: clawhub
+    endpoints:
+      - clawhub.com:443
+    binaries:
+      - /usr/local/bin/openclaw
+    rules:
+      - methods: ["GET", "POST"]
+
+  - name: openclaw_api
+    endpoints:
+      - openclaw.ai:443
+    binaries:
+      - /usr/local/bin/openclaw
+    rules:
+      - methods: ["GET", "POST"]
+
+  - name: openclaw_docs
+    endpoints:
+      - docs.openclaw.ai:443
+    binaries:
+      - /usr/local/bin/openclaw
+    rules:
+      - methods: ["GET"]
+
+  # npm registry for plugin management
+  - name: npm_registry
+    endpoints:
+      - registry.npmjs.org:443
+    binaries:
+      - /usr/local/bin/openclaw
+      - /usr/local/bin/npm
+    rules:
+      - methods: ["GET"]

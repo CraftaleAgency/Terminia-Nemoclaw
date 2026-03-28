@@ -1,0 +1,111 @@
+services:
+    # Orchestrator - Nemotron-8B Claude Opus Distill (task planning, delegation)
+    llama-server-orchestrator:
+        image: local/llama-server:latest
+        container_name: llama-server-orchestrator
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: 10G
+        ports:
+            - "8083:8080"
+        volumes:
+            - /home/ppezz/models/nemotron-orchestrator:/models:ro
+        command:
+            - --model
+            - /models/orchestrator-8b-claude-4.5-opus-distill.q4_k_m.gguf
+            - --ctx-size
+            - "32768"
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+            - -t
+            - "24"
+            - --jinja
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 45s
+        networks:
+            - llmserver-ai-network
+            - dokploy-network
+
+    # Worker - Nemotron-3-Nano-4B (fast execution)
+    # NOTE: Requires official llama.cpp build (nemotron_h architecture).
+    # Current ik_llama.cpp fork does NOT support this model.
+    # Rebuild: docker build -t local/llama-server:latest . (from official repo)
+    llama-server-worker:
+        image: local/llama-server:latest
+        container_name: llama-server-worker
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: 6G
+        ports:
+            - "8084:8080"
+        volumes:
+            - /home/ppezz/models/nemotron-nano-worker:/models:ro
+        command:
+            - --model
+            - /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf
+            - --ctx-size
+            - "16384"
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+            - -t
+            - "16"
+            - --jinja
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 30s
+        networks:
+            - llmserver-ai-network
+            - dokploy-network
+
+    # LiteLLM Proxy - OpenAI-compatible API gateway
+    litellm-proxy:
+        image: ghcr.io/berriai/litellm:main-latest
+        container_name: litellm-proxy
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: 2G
+        ports:
+            - "4000:4000"
+        environment:
+            - LITELLM_PORT=4000
+            - LITELLM_DROP_PARAMS=true
+        command: ["--config", "/app/config.yaml", "--port", "4000"]
+        volumes:
+            - ./litellm-config.yaml:/app/config.yaml:ro
+        healthcheck:
+            test:
+                [
+                    "CMD",
+                    "python3",
+                    "-c",
+                    "import urllib.request; urllib.request.urlopen('http://localhost:4000/health')",
+                ]
+            interval: 30s
+            timeout: 90s
+            retries: 3
+        networks:
+            - llmserver-ai-network
+            - dokploy-network
+
+networks:
+    llmserver-ai-network:
+        external: true
+    dokploy-network:
+        external: true

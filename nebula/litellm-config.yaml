@@ -1,0 +1,31 @@
+model_list:
+  # Default routes to Orchestrator
+  - model_name: default
+    litellm_params:
+      model: openai/nemotron-orchestrator-8b
+      api_base: http://llama-server-orchestrator:8080/v1
+      api_key: dummy
+
+  # Orchestrator - Nemotron-8B (task planning, complex reasoning)
+  - model_name: nemotron-orchestrator
+    litellm_params:
+      model: openai/nemotron-orchestrator-8b
+      api_base: http://llama-server-orchestrator:8080/v1
+      api_key: dummy
+
+  # Worker - Nemotron-3-Nano-4B (fast execution)
+  - model_name: nemotron-nano
+    litellm_params:
+      model: openai/nemotron-nano-4b
+      api_base: http://llama-server-worker:8080/v1
+      api_key: dummy
+
+  - model_name: fast
+    litellm_params:
+      model: openai/nemotron-nano-4b
+      api_base: http://llama-server-worker:8080/v1
+      api_key: dummy
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
