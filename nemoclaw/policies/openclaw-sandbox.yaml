@@ -80,6 +80,36 @@ network:
     rules:
       - methods: ["GET"]
 
+  # Claude Code (included in NemoClaw baseline)
+  - name: claude_code
+    endpoints:
+      - api.anthropic.com:443
+      - statsig.anthropic.com:443
+      - sentry.io:443
+    binaries:
+      - /usr/local/bin/claude
+    rules:
+      - methods: ["ALL"]
+
+  # NVIDIA endpoints (included in NemoClaw baseline)
+  - name: nvidia
+    endpoints:
+      - integrate.api.nvidia.com:443
+      - inference-api.nvidia.com:443
+    binaries:
+      - /usr/local/bin/claude
+      - /usr/local/bin/openclaw
+    rules:
+      - methods: ["ALL"]
+
+  # Telegram bridge (included in NemoClaw baseline)
+  - name: telegram
+    endpoints:
+      - api.telegram.org:443
+    rules:
+      - methods: ["GET", "POST"]
+        paths: ["/bot*/**"]
+
   # Supabase — backend database access (service role)
   - name: supabase
     endpoints:
