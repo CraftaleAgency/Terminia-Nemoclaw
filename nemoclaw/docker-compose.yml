@@ -15,6 +15,7 @@ services:
             - nemoclaw-data:/root/.nemoclaw
             - openshell-data:/root/.openshell
             - sandbox-data:/sandbox
+            - openshell-cluster-terminia-gateway:/var/lib/rancher/k3s
         environment:
             - OPENSHELL_GATEWAY=${OPENSHELL_GATEWAY:-terminia-gateway}
             - OPENSHELL_PORT=${OPENSHELL_PORT:-30051}
