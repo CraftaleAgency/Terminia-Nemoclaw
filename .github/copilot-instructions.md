@@ -28,7 +28,8 @@ Both stacks deploy via Dokploy pointing at their respective `docker-compose.yml`
 ```bash
 ./nebula/create-network.sh          # create shared bridge network (once)
 cd nebula && docker compose up -d   # inference stack
-cd ../nemoclaw && docker compose up -d && ./setup.sh  # gateway + CLI + sandbox
+nemoclaw onboard                    # guided wizard: gateway + provider + sandbox + policy
+cd nemoclaw && ./setup.sh           # upload skills, workspace, env vars, cron
 ```
 
 ### Health checks
@@ -37,15 +38,17 @@ curl http://localhost:8083/health   # orchestrator
 curl http://localhost:8084/health   # worker
 curl http://localhost:4000/health   # litellm-proxy
 curl http://localhost:8086/health   # OCR (NuMarkdown)
-curl http://localhost:8082/health   # nemoclaw gateway
+curl http://localhost:18789/health  # nemoclaw gateway
 ```
 
 ### Sandbox management
 ```bash
-nemoclaw terminia-sandbox connect     # enter sandbox
-nemoclaw terminia-sandbox status      # health + inference check
-nemoclaw terminia-sandbox logs -f     # stream logs
-openshell term                        # TUI: monitor + approve egress
+nemoclaw terminia connect        # Connect to sandbox shell
+nemoclaw terminia status         # Health + inference check
+nemoclaw terminia logs --follow  # Stream logs
+openshell term                   # TUI for monitoring & egress approval
+openshell sandbox upload terminia <local> <sandbox-path>  # Upload files
+openshell sandbox download terminia <sandbox-path> <local>  # Download files
 
 # Switch model at runtime (no restart needed)
 openshell inference set --provider litellm --model nemotron-nano
@@ -66,7 +69,7 @@ LiteLLM model routing is defined in `nebula/litellm-config.yaml`. Model aliases:
 
 `nemoclaw/policies/openclaw-sandbox.yaml` defines the active network + filesystem policy:
 - **Filesystem**: `/sandbox` and `/tmp` are read-write; everything else read-only
-- **Network**: deny-by-default; only `inference.local`, `github.com`, `api.github.com`, `clawhub.com`, `openclaw.ai`, and `registry.npmjs.org` are whitelisted by binary
+- **Network**: deny-by-default; only `inference.local`, `github.com`, `api.github.com`, `clawhub.com`, `openclaw.ai`, and `registry.npmjs.org` are whitelisted by binary. Baseline entries also include `claude_code`, `nvidia`, and `telegram` for tooling and notification support
 - Unlisted egress requires operator approval via `openshell term`
 
 Applied during setup via `openshell policy set nemoclaw/policies/openclaw-sandbox.yaml`
@@ -102,6 +105,16 @@ Cloudflare tunnel → Traefik → services:
 ## OpenClaw Skills
 
 Agent skills live in `skills/` and are deployed to the sandbox at `/sandbox/.openclaw/skills/` during `setup.sh`. Each skill has a `SKILL.md` (definition) and `handler.js` (implementation).
+
+## Workspace Files
+
+Agent personality and behavior files in `workspace/`, uploaded to `/sandbox/.openclaw/workspace/` during setup:
+- `SOUL.md` — Personality, tone, behavioral rules, available skills
+- `IDENTITY.md` — Agent name (Terminia), emoji, tagline, self-introduction
+- `USER.md` — Default company profile template (populated per-user)
+- `AGENTS.md` — Skill orchestration flows, safety guidelines, memory conventions
+
+Backup: `./scripts/backup-workspace.sh backup terminia`
 
 ### Shared modules (`skills/_shared/`)
 - `supabase-client.js` — Supabase client initialized with service role key (env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`)

@@ -63,7 +63,7 @@ The agents write to Supabase using a service role key — the two halves never t
 │  │               TERMINIA-NEMOCLAW  (this repo)                   │  │
 │  │                                                                │  │
 │  │  ┌──────────────────────────────────────────────────────────┐  │  │
-│  │  │               OpenClaw Sandbox (terminia-sandbox)        │  │  │
+│  │  │               OpenClaw Sandbox (terminia)                │  │  │
 │  │  │                                                          │  │  │
 │  │  │  ┌───────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │  │  │
 │  │  │  │ Contract  │ │  OSINT   │ │  Bando   │ │   Doc    │  │  │  │
@@ -76,7 +76,7 @@ The agents write to Supabase using a service role key — the two halves never t
 │  │  └──────────────────────────┼───────────────────────────────┘  │  │
 │  │                             │ (intercepted)                    │  │
 │  │  ┌──────────────────────────▼───────────────────────────────┐  │  │
-│  │  │          OpenShell Gateway  (:8082 → :30051)             │  │  │
+│  │  │          OpenShell Gateway  (:18789 → :30051)            │  │  │
 │  │  │    Sandbox lifecycle · Inference routing · Policy         │  │  │
 │  │  └──────────────────────────┬───────────────────────────────┘  │  │
 │  │                             │                                  │  │
@@ -200,7 +200,7 @@ openshell-gateway:
   privileged: true
   pid: host
   ports:
-    - "8082:30051"
+    - "18789:30051"
   volumes:
     - /var/run/docker.sock:/var/run/docker.sock   # manages sandbox containers
     - nemoclaw-data:/root/.nemoclaw
@@ -223,12 +223,12 @@ Key commands:
 
 | Command | Purpose |
 |---------|---------|
-| `nemoclaw terminia-sandbox connect` | Enter the sandbox shell |
-| `nemoclaw terminia-sandbox status` | Health + inference status |
-| `nemoclaw terminia-sandbox logs -f` | Stream sandbox logs |
-| `nemoclaw terminia-sandbox exec -- <cmd>` | Run a command inside sandbox |
-| `nemoclaw terminia-sandbox cp <src> <dst>` | Copy files into sandbox |
-| `nemoclaw terminia-sandbox env set KEY=VALUE` | Set environment variables |
+| `nemoclaw terminia connect` | Enter the sandbox shell |
+| `nemoclaw terminia status` | Health + inference status |
+| `nemoclaw terminia logs --follow` | Stream sandbox logs |
+| `openshell sandbox connect terminia -- <cmd>` | Run a command inside sandbox |
+| `openshell sandbox upload terminia <src> <dst>` | Upload files into sandbox |
+| `openshell sandbox download terminia <src> <dst>` | Download files from sandbox |
 | `openshell term` | TUI: monitor agents, approve network egress |
 | `openshell provider create ...` | Register an inference provider |
 | `openshell inference set --provider litellm --model nemotron-orchestrator` | Set active model |
@@ -468,6 +468,22 @@ Computed by `computeMatchScore()` in `_shared/utils.js`:
 
 ---
 
+## 5.4 Workspace Files
+
+Agent personality and behavior files live in `workspace/` and are uploaded to
+`/sandbox/.openclaw/workspace/` during `setup.sh`.
+
+| File | Purpose |
+|------|---------|
+| `SOUL.md` | Personality, tone, behavioral rules, available skills |
+| `IDENTITY.md` | Agent name (Terminia), emoji, tagline, self-introduction |
+| `USER.md` | Default company profile template (populated per-user) |
+| `AGENTS.md` | Skill orchestration flows, safety guidelines, memory conventions |
+
+Backup and restore: `./scripts/backup-workspace.sh backup terminia` / `restore`.
+
+---
+
 ## 6. Data Flow
 
 ### 6.1 Contract Upload → Analysis
@@ -629,6 +645,9 @@ whitelisted endpoints are reachable.
 | `anac_opendata` | `dati.anticorruzione.it:443` | `node` | GET |
 | `anac_casellario` | `casellario.anticorruzione.it:443` | `node` | GET, POST |
 | `ted_europa` | `ted.europa.eu:443`, `api.ted.europa.eu:443` | `node` | GET |
+| `claude_code` | `api.anthropic.com:443` | `claude_code` | ALL |
+| `nvidia` | `*.nvidia.com:443` | `openclaw`, `node` | GET, POST |
+| `telegram` | `api.telegram.org:443` | `node` | GET, POST |
 
 Any request not matching these rules is **blocked** unless an operator approves it
 in real-time via `openshell term`.
@@ -656,7 +675,7 @@ filesystem:
 | Secret | Location | Visible to sandbox? |
 |--------|----------|---------------------|
 | Inference API keys | `~/.nemoclaw/credentials.json` (host) | **No** — injected by OpenShell gateway |
-| Supabase service role key | Sandbox env var (set via `nemoclaw env set`) | Yes — required by skills |
+| Supabase service role key | Sandbox env var (set via `openshell sandbox connect`) | Yes — required by skills |
 | VIES API key | Sandbox env var | Yes — required by `osint-vat` |
 
 ### 8.4 GDPR Compliance
@@ -694,21 +713,24 @@ cp nemoclaw/.env.example nemoclaw/.env   # edit gateway config
 # 3. Deploy Nebula inference stack
 cd nebula && docker compose up -d
 
-# 4. Deploy NemoClaw gateway + install CLI + create sandbox
-cd ../nemoclaw && ./setup.sh
+# 4. Onboard NemoClaw (guided wizard: gateway + provider + sandbox + policy)
+nemoclaw onboard
+
+# 5. Upload skills, workspace, env vars, cron
+cd nemoclaw && ./setup.sh
 ```
 
-The `setup.sh` script performs 9 steps:
+The `setup.sh` script (run after `nemoclaw onboard`) performs:
 
-1. Start OpenShell gateway, wait for health
-2. Install NemoClaw CLI on host
-3. Register LiteLLM as inference provider (`openshell provider create`)
-4. Create `terminia-sandbox` container
-5. Set inference route to `nemotron-orchestrator`
-6. Apply network policy from `policies/openclaw-sandbox.yaml`
-7. Copy all 10 skills into `/sandbox/.openclaw/skills/`
-8. Set Supabase and VIES credentials as sandbox env vars
-9. Configure BandoRadar cron (06:00/06:30/07:00)
+1. Wait for OpenShell gateway health
+2. Upload all 10 skills into `/sandbox/.openclaw/skills/`
+3. Upload workspace files into `/sandbox/.openclaw/workspace/`
+4. Set Supabase and VIES credentials as sandbox env vars
+5. Configure BandoRadar cron (06:00/06:30/07:00)
+
+> **Note:** `nemoclaw onboard` handles gateway startup, CLI install, provider registration,
+> sandbox creation, inference routing, and policy application. `setup.sh` handles the
+> project-specific uploads and configuration.
 
 ### 9.3 Model Storage
 
@@ -757,12 +779,12 @@ Models are mounted **read-only** into containers.
 |----------|---------|---------|
 | `OPENSHELL_GATEWAY` | terminia-gateway | Gateway name |
 | `OPENSHELL_PORT` | 30051 | Internal gateway port |
-| `GATEWAY_HOST_PORT` | 8082 | Host-mapped port |
+| `GATEWAY_HOST_PORT` | 18789 | Host-mapped port (NemoClaw default) |
 | `INFERENCE_PROVIDER` | litellm | Provider name |
 | `INFERENCE_ENDPOINT` | `http://litellm-proxy:4000` | LiteLLM URL |
 | `INFERENCE_MODEL` | nemotron-orchestrator | Default model |
 
-#### Sandbox Environment (set via `nemoclaw env set`)
+#### Sandbox Environment (set via `openshell sandbox connect`)
 
 | Variable | Purpose |
 |----------|---------|
@@ -777,7 +799,7 @@ curl http://localhost:8083/health   # orchestrator
 curl http://localhost:8084/health   # worker
 curl http://localhost:8086/health   # OCR
 curl http://localhost:4000/health   # litellm-proxy
-curl http://localhost:8082/health   # openshell-gateway
+curl http://localhost:18789/health  # openshell-gateway
 ```
 
 ---
