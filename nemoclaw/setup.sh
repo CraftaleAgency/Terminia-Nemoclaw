@@ -149,9 +149,9 @@ echo ""
 # Step 9: Configure BandoRadar cron (daily sync)
 echo "⏰ Step 9: Configuring BandoRadar daily sync..."
 nemoclaw terminia-sandbox exec -- sh -c \
-    'echo "0 6 * * * cd /sandbox/.openclaw/skills && node --input-type=module -e \"import(\\\"./bandi-sync-anac/handler.js\\\").then(m=>m.handler({}).then(console.log))\" >> /tmp/bandi-sync.log 2>&1
-30 6 * * * cd /sandbox/.openclaw/skills && node --input-type=module -e \"import(\\\"./bandi-sync-ted/handler.js\\\").then(m=>m.handler({}).then(console.log))\" >> /tmp/bandi-sync.log 2>&1
-0 7 * * * cd /sandbox/.openclaw/skills && node --input-type=module -e \"import(\\\"./bandi-match/handler.js\\\").then(m=>m.handler({}).then(console.log))\" >> /tmp/bandi-match.log 2>&1" | crontab -' 2>/dev/null || \
+    'echo "0 6 * * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-sync-anac/scripts/handler.js >> /tmp/bandi-sync.log 2>&1
+30 6 * * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-sync-ted/scripts/handler.js >> /tmp/bandi-sync.log 2>&1
+0 7 * * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-match/scripts/handler.js >> /tmp/bandi-match.log 2>&1" | crontab -' 2>/dev/null || \
     echo -e "${YELLOW}⚠ Cron setup failed — configure manually inside sandbox${NC}"
 echo "  Schedule: 06:00 ANAC sync → 06:30 TED sync → 07:00 Match scoring"
 echo ""
@@ -162,7 +162,8 @@ echo "┌───────────────────────�
 echo "│  Gateway:    http://localhost:8082                      │"
 echo "│  Health:     http://localhost:8082/health               │"
 echo "│  Inference:  litellm-proxy:4000 → llama-server:8083    │"
-echo "│  Skills:     9 Terminia skills deployed                 │"
+echo "│  OCR:        NuMarkdown-8B via litellm-proxy:4000/ocr  │"
+echo "│  Skills:     10 Terminia skills deployed                │"
 echo "│  Cron:       BandoRadar daily @ 06:00                   │"
 echo "└─────────────────────────────────────────────────────────┘"
 echo ""
