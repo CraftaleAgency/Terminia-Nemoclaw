@@ -91,6 +91,8 @@ services:
         command:
             - --model
             - /models/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+            - --mmproj
+            - /models/Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf
             - --ctx-size
             - "${VISION_CTX_SIZE:-8192}"
             - --host
