@@ -223,6 +223,20 @@ openshell sandbox connect "$SANDBOX_NAME" -- sh -c \
 echo "  Schedule: 06:00 ANAC sync → 06:30 TED sync → 07:00 Match scoring"
 echo ""
 
+# ── Step 10: Configure Telegram bot bridge ───────────────────────────────────
+echo "🤖 Step 10: Configuring Telegram bot bridge..."
+
+if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+    echo -e "  ${GREEN}✓ TELEGRAM_BOT_TOKEN is set${NC}"
+    echo "  Starting NemoClaw with Telegram bridge..."
+    nemoclaw start --telegram 2>/dev/null || \
+        echo -e "${YELLOW}⚠ Telegram bridge start failed — start manually: nemoclaw start --telegram${NC}"
+else
+    echo -e "  ${YELLOW}⚠ TELEGRAM_BOT_TOKEN not set — skipping Telegram bridge${NC}"
+    echo "    Set TELEGRAM_BOT_TOKEN in nemoclaw/.env and run: nemoclaw start --telegram"
+fi
+echo ""
+
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo -e "${GREEN}✅ Setup complete${NC}"
 echo ""
@@ -234,6 +248,7 @@ echo "│  OCR:        NuMarkdown-8B via litellm-proxy:4000/ocr       │"
 echo "│  Skills:     10 Terminia skills uploaded                     │"
 echo "│  Workspace:  SOUL.md + IDENTITY.md + USER.md                │"
 echo "│  Cron:       BandoRadar daily @ 06:00                        │"
+echo "│  Telegram:   Bridge enabled (if TELEGRAM_BOT_TOKEN set)      │"
 echo "└──────────────────────────────────────────────────────────────┘"
 echo ""
 echo "Commands:"

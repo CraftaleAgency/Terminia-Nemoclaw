@@ -727,6 +727,7 @@ The `setup.sh` script (run after `nemoclaw onboard`) performs:
 3. Upload workspace files into `/sandbox/.openclaw/workspace/`
 4. Set Supabase and VIES credentials as sandbox env vars
 5. Configure BandoRadar cron (06:00/06:30/07:00)
+6. Start Telegram bot bridge (if `TELEGRAM_BOT_TOKEN` is set)
 
 > **Note:** `nemoclaw onboard` handles gateway startup, CLI install, provider registration,
 > sandbox creation, inference routing, and policy application. `setup.sh` handles the
@@ -783,6 +784,7 @@ Models are mounted **read-only** into containers.
 | `INFERENCE_PROVIDER` | litellm | Provider name |
 | `INFERENCE_ENDPOINT` | `http://litellm-proxy:4000` | LiteLLM URL |
 | `INFERENCE_MODEL` | nemotron-orchestrator | Default model |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token for the bridge (never commit) |
 
 #### Sandbox Environment (set via `openshell sandbox connect`)
 
@@ -792,7 +794,30 @@ Models are mounted **read-only** into containers.
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (bypasses RLS) |
 | `VIES_API_KEY` | EU VIES API key |
 
-### 9.5 Health Checks
+### 9.5 Telegram Bot Bridge
+
+NemoClaw includes a Telegram bridge that allows users to interact with the Terminia AI assistant directly via Telegram.
+
+**Configuration:**
+
+- The bot token is stored in `nemoclaw/.env` as `TELEGRAM_BOT_TOKEN` and must **never** be committed to version control.
+- The bridge is started automatically by `setup.sh` (Step 10) when the token is present, or manually with:
+  ```bash
+  nemoclaw start --telegram
+  ```
+  Alternatively, setting `TELEGRAM_BOT_TOKEN` in the environment and running `nemoclaw start` also enables the bridge.
+
+**Telegram Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message and usage instructions |
+| `/help` | List available commands and capabilities |
+| *(regular message)* | Processed as a contract query by the Terminia AI |
+
+**Language:** The bot responds in **Italian**, consistent with Terminia's target audience (Italian public procurement professionals).
+
+### 9.6 Health Checks
 
 ```bash
 curl http://localhost:8083/health   # orchestrator

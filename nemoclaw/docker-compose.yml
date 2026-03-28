@@ -28,6 +28,29 @@ services:
             retries: 3
             start_period: 60s
 
+    terminia-api:
+        build:
+            context: ./api
+            dockerfile: Dockerfile
+        container_name: terminia-api
+        restart: unless-stopped
+        ports:
+            - "${API_HOST_PORT:-3100}:3100"
+        environment:
+            - PORT=3100
+            - SUPABASE_URL=${SUPABASE_URL}
+            - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+            - LITELLM_URL=http://litellm-proxy:4000
+            - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+            - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,https://terminia.pezserv.org}
+            - NODE_ENV=production
+        networks:
+            - llmserver-ai-network
+            - dokploy-network
+        depends_on:
+            openshell-gateway:
+                condition: service_healthy
+
 networks:
     llmserver-ai-network:
         name: llmserver-ai-network
