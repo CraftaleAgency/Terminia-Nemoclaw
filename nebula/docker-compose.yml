@@ -74,6 +74,45 @@ services:
             - llmserver-ai-network
             - dokploy-network
 
+    # Vision - Nemotron-Nano-VL-8B (image + text understanding)
+    # Download model + mmproj from: https://huggingface.co/nvidia/Llama-3.1-Nemotron-Nano-VL-8B-V1
+    # Place both files in VISION_MODEL_PATH directory
+    llama-server-vision:
+        image: local/llama-server:latest
+        container_name: llama-server-vision
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: ${VISION_MEMORY_LIMIT:-12G}
+        ports:
+            - "${VISION_PORT:-8085}:8080"
+        volumes:
+            - ${VISION_MODEL_PATH}:/models:ro
+        command:
+            - --model
+            - /models/${VISION_MODEL_FILE}
+            - --mmproj
+            - /models/${VISION_MMPROJ_FILE}
+            - --ctx-size
+            - "${VISION_CTX_SIZE:-8192}"
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+            - -t
+            - "${VISION_THREADS:-16}"
+            - --jinja
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 60s
+        networks:
+            - llmserver-ai-network
+            - dokploy-network
+
     # LiteLLM Proxy - OpenAI-compatible API gateway
     litellm-proxy:
         image: ghcr.io/berriai/litellm:main-latest

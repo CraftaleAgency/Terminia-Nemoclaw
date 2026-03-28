@@ -34,6 +34,23 @@ model_list:
     model_info:
       supports_vision: false
 
+  # Vision - Nemotron-Nano-VL-8B (image + text)
+  - model_name: nemotron-vision
+    litellm_params:
+      model: openai/nemotron-nano-vl-8b
+      api_base: http://llama-server-vision:8080/v1
+      api_key: dummy
+    model_info:
+      supports_vision: true
+
+  - model_name: vision
+    litellm_params:
+      model: openai/nemotron-nano-vl-8b
+      api_base: http://llama-server-vision:8080/v1
+      api_key: dummy
+    model_info:
+      supports_vision: true
+
 litellm_settings:
   drop_params: true
   set_verbose: false
