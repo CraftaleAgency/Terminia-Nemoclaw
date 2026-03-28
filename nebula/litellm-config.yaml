@@ -5,6 +5,8 @@ model_list:
       model: openai/nemotron-orchestrator-8b
       api_base: http://llama-server-orchestrator:8080/v1
       api_key: dummy
+    model_info:
+      supports_vision: false
 
   # Orchestrator - Nemotron-8B (task planning, complex reasoning)
   - model_name: nemotron-orchestrator
@@ -12,6 +14,8 @@ model_list:
       model: openai/nemotron-orchestrator-8b
       api_base: http://llama-server-orchestrator:8080/v1
       api_key: dummy
+    model_info:
+      supports_vision: false
 
   # Worker - Nemotron-3-Nano-4B (fast execution)
   - model_name: nemotron-nano
@@ -19,12 +23,16 @@ model_list:
       model: openai/nemotron-nano-4b
       api_base: http://llama-server-worker:8080/v1
       api_key: dummy
+    model_info:
+      supports_vision: false
 
   - model_name: fast
     litellm_params:
       model: openai/nemotron-nano-4b
       api_base: http://llama-server-worker:8080/v1
       api_key: dummy
+    model_info:
+      supports_vision: false
 
 litellm_settings:
   drop_params: true
