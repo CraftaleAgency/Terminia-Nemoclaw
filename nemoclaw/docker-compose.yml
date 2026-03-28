@@ -66,3 +66,5 @@ volumes:
         driver: local
     sandbox-data:
         driver: local
+    openshell-cluster-terminia-gateway:
+        external: true
