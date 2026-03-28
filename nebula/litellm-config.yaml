@@ -34,10 +34,10 @@ model_list:
     model_info:
       supports_vision: false
 
-  # Vision - Nemotron-Nano-VL-8B (image + text)
+  # Vision - Qwen2.5-VL-7B (image + text, qwen2vl architecture)
   - model_name: nemotron-vision
     litellm_params:
-      model: openai/nemotron-nano-vl-8b
+      model: openai/qwen2.5-vl-7b
       api_base: http://llama-server-vision:8080/v1
       api_key: dummy
     model_info:
@@ -45,7 +45,7 @@ model_list:
 
   - model_name: vision
     litellm_params:
-      model: openai/nemotron-nano-vl-8b
+      model: openai/qwen2.5-vl-7b
       api_base: http://llama-server-vision:8080/v1
       api_key: dummy
     model_info:

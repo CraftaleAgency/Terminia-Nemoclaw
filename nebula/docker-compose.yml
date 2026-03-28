@@ -74,9 +74,8 @@ services:
             - llmserver-ai-network
             - dokploy-network
 
-    # Vision - Nemotron-Nano-VL-8B (image + text understanding)
-    # Download model + mmproj from: https://huggingface.co/nvidia/Llama-3.1-Nemotron-Nano-VL-8B-V1
-    # Place both files in VISION_MODEL_PATH directory
+    # Vision - Qwen2.5-VL-7B (image + text understanding, vision encoder embedded in GGUF)
+    # Architecture: qwen2vl — no separate mmproj file needed
     llama-server-vision:
         image: local/llama-server:latest
         container_name: llama-server-vision
@@ -84,7 +83,7 @@ services:
         deploy:
             resources:
                 limits:
-                    memory: ${VISION_MEMORY_LIMIT:-12G}
+                    memory: ${VISION_MEMORY_LIMIT:-8G}
         ports:
             - "${VISION_PORT:-8085}:8080"
         volumes:
@@ -92,8 +91,6 @@ services:
         command:
             - --model
             - /models/${VISION_MODEL_FILE}
-            - --mmproj
-            - /models/${VISION_MMPROJ_FILE}
             - --ctx-size
             - "${VISION_CTX_SIZE:-8192}"
             - --host
