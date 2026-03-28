@@ -7,22 +7,22 @@ services:
         deploy:
             resources:
                 limits:
-                    memory: 10G
+                    memory: ${ORCHESTRATOR_MEMORY_LIMIT:-10G}
         ports:
-            - "8083:8080"
+            - "${ORCHESTRATOR_PORT:-8083}:8080"
         volumes:
-            - /home/ppezz/models/nemotron-orchestrator:/models:ro
+            - ${ORCHESTRATOR_MODEL_PATH}:/models:ro
         command:
             - --model
-            - /models/orchestrator-8b-claude-4.5-opus-distill.q4_k_m.gguf
+            - /models/${ORCHESTRATOR_MODEL_FILE}
             - --ctx-size
-            - "32768"
+            - "${ORCHESTRATOR_CTX_SIZE:-32768}"
             - --host
             - "0.0.0.0"
             - --port
             - "8080"
             - -t
-            - "24"
+            - "${ORCHESTRATOR_THREADS:-24}"
             - --jinja
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -36,8 +36,6 @@ services:
 
     # Worker - Nemotron-3-Nano-4B (fast execution)
     # NOTE: Requires official llama.cpp build (nemotron_h architecture).
-    # Current ik_llama.cpp fork does NOT support this model.
-    # Rebuild: docker build -t local/llama-server:latest . (from official repo)
     llama-server-worker:
         image: local/llama-server:latest
         container_name: llama-server-worker
@@ -45,22 +43,22 @@ services:
         deploy:
             resources:
                 limits:
-                    memory: 6G
+                    memory: ${WORKER_MEMORY_LIMIT:-6G}
         ports:
-            - "8084:8080"
+            - "${WORKER_PORT:-8084}:8080"
         volumes:
-            - /home/ppezz/models/nemotron-nano-worker:/models:ro
+            - ${WORKER_MODEL_PATH}:/models:ro
         command:
             - --model
-            - /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf
+            - /models/${WORKER_MODEL_FILE}
             - --ctx-size
-            - "16384"
+            - "${WORKER_CTX_SIZE:-16384}"
             - --host
             - "0.0.0.0"
             - --port
             - "8080"
             - -t
-            - "16"
+            - "${WORKER_THREADS:-16}"
             - --jinja
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -80,13 +78,13 @@ services:
         deploy:
             resources:
                 limits:
-                    memory: 2G
+                    memory: ${LITELLM_MEMORY_LIMIT:-2G}
         ports:
-            - "4000:4000"
+            - "${LITELLM_PORT:-4000}:4000"
         environment:
-            - LITELLM_PORT=4000
-            - LITELLM_DROP_PARAMS=true
-        command: ["--config", "/app/config.yaml", "--port", "4000"]
+            - LITELLM_PORT=${LITELLM_PORT:-4000}
+            - LITELLM_DROP_PARAMS=${LITELLM_DROP_PARAMS:-true}
+        command: ["--config", "/app/config.yaml", "--port", "${LITELLM_PORT:-4000}"]
         volumes:
             - ./litellm-config.yaml:/app/config.yaml:ro
         healthcheck:

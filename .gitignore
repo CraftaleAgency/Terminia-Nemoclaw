@@ -1,0 +1,8 @@
+# Environment files with real values
+.env
+nebula/.env
+nemoclaw/.env
+
+# OS
+.DS_Store
+Thumbs.db
