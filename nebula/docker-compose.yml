@@ -74,8 +74,7 @@ services:
             - llmserver-ai-network
             - dokploy-network
 
-    # Vision - Qwen2.5-VL-7B (image + text understanding, vision encoder embedded in GGUF)
-    # Architecture: qwen2vl — no separate mmproj file needed
+    # Vision - NVIDIA Nemotron-Nano-12B-v2-VL (image + text, nemotron_h architecture)
     llama-server-vision:
         image: local/llama-server:latest
         container_name: llama-server-vision
@@ -83,16 +82,16 @@ services:
         deploy:
             resources:
                 limits:
-                    memory: ${VISION_MEMORY_LIMIT:-8G}
+                    memory: ${VISION_MEMORY_LIMIT:-12G}
         ports:
             - "${VISION_PORT:-8085}:8080"
         volumes:
-            - /home/ppezz/models/qwen25-vl:/models:ro
+            - /home/ppezz/models/nemotron-vl:/models:ro
         command:
             - --model
-            - /models/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+            - /models/NVIDIA-Nemotron-Nano-12B-v2-VL-Q4_K_M.gguf
             - --mmproj
-            - /models/Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf
+            - /models/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16-mmproj.gguf
             - --ctx-size
             - "${VISION_CTX_SIZE:-8192}"
             - --host
