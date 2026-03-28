@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { supabase } from '../../_shared/supabase-client.js';
 import { isoNow } from '../../_shared/utils.js';
 
@@ -262,7 +263,7 @@ async function markExpiredBandi() {
  * @param {{ company_id?: string }} input
  * @returns {Promise<{ synced: number, skipped_duplicates: number, errors: number, source: string }>}
  */
-export async function handler(input = {}) {
+async function handler(input = {}) {
   const result = { synced: 0, skipped_duplicates: 0, errors: 0, source: 'anac' };
 
   // Step 1 — Resolve dataset URL
@@ -351,3 +352,22 @@ export async function handler(input = {}) {
 
   return result;
 }
+
+// CLI entry point
+async function main() {
+  try {
+    let raw = '';
+    for await (const chunk of process.stdin) {
+      raw += chunk;
+    }
+    const input = JSON.parse(raw);
+    const result = await handler(input);
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  } catch (err) {
+    console.log(JSON.stringify({ error: err.message }));
+    process.exit(1);
+  }
+}
+
+main();

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { supabase } from '../../_shared/supabase-client.js';
 import { getCached } from '../../_shared/cache.js';
 import { isoNow } from '../../_shared/utils.js';
@@ -249,7 +250,7 @@ async function updateCounterpart(counterpartId, result) {
  * @param {{ vat_number: string, company_name: string, counterpart_id?: string }} input
  * @returns {Promise<object>}
  */
-export async function handler(input) {
+async function handler(input) {
   const { vat_number, company_name, counterpart_id } = input;
 
   if (!vat_number && !company_name) {
@@ -333,3 +334,22 @@ async function safeUpdateCounterpart(counterpartId, result) {
     // Non-fatal: ANAC result is still returned even if DB write fails
   }
 }
+
+// CLI entry point
+async function main() {
+  try {
+    let raw = '';
+    for await (const chunk of process.stdin) {
+      raw += chunk;
+    }
+    const input = JSON.parse(raw);
+    const result = await handler(input);
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  } catch (err) {
+    console.log(JSON.stringify({ error: err.message }));
+    process.exit(1);
+  }
+}
+
+main();

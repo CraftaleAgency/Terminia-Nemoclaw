@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { supabase } from '../../_shared/supabase-client.js';
 import { callInference, parseInferenceJSON, isoNow } from '../../_shared/utils.js';
 
@@ -120,7 +121,7 @@ async function findOrCreateCounterpart(companyId, counterpartData) {
  * @param {{ text: string, contract_id?: string, company_id: string }} input
  * @returns {Promise<object>} Classification result
  */
-export async function handler(input) {
+async function handler(input) {
   const { text, contract_id, company_id } = input;
 
   if (!text) throw new Error('Missing required field: text');
@@ -192,3 +193,22 @@ export async function handler(input) {
 
   return classification;
 }
+
+// CLI entry point
+async function main() {
+  try {
+    let raw = '';
+    for await (const chunk of process.stdin) {
+      raw += chunk;
+    }
+    const input = JSON.parse(raw);
+    const result = await handler(input);
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  } catch (err) {
+    console.log(JSON.stringify({ error: err.message }));
+    process.exit(1);
+  }
+}
+
+main();

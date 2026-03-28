@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { isoNow } from '../../_shared/utils.js';
 import { supabase } from '../../_shared/supabase-client.js';
 
@@ -73,7 +74,7 @@ function encodeName(name) {
 
 // ── Main handler ─────────────────────────────────────────────────────
 
-export async function handler(input) {
+async function handler(input) {
   const { codice_fiscale, nome, cognome, data_nascita, counterpart_id, employee_id } = input;
   const errors = [];
 
@@ -227,3 +228,22 @@ export async function handler(input) {
 
   return result;
 }
+
+// CLI entry point
+async function main() {
+  try {
+    let raw = '';
+    for await (const chunk of process.stdin) {
+      raw += chunk;
+    }
+    const input = JSON.parse(raw);
+    const result = await handler(input);
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  } catch (err) {
+    console.log(JSON.stringify({ error: err.message }));
+    process.exit(1);
+  }
+}
+
+main();

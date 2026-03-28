@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { supabase } from '../../_shared/supabase-client.js';
 import { getCached, setCache } from '../../_shared/cache.js';
 import { isoNow } from '../../_shared/utils.js';
@@ -104,7 +105,7 @@ async function updateCounterpart(counterpartId, viesResult) {
  * @param {{ vat_number: string, country_code?: string, counterpart_id?: string }} input
  * @returns {Promise<object>}
  */
-export async function handler(input) {
+async function handler(input) {
   const { vat_number, country_code, counterpart_id } = input;
 
   if (!vat_number) throw new Error('Missing required field: vat_number');
@@ -190,3 +191,22 @@ export async function handler(input) {
     error: viesResult.isValid === false ? (viesResult.userError ?? null) : null,
   };
 }
+
+// CLI entry point
+async function main() {
+  try {
+    let raw = '';
+    for await (const chunk of process.stdin) {
+      raw += chunk;
+    }
+    const input = JSON.parse(raw);
+    const result = await handler(input);
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  } catch (err) {
+    console.log(JSON.stringify({ error: err.message }));
+    process.exit(1);
+  }
+}
+
+main();

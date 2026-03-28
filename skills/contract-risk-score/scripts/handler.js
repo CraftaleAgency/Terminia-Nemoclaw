@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { supabase } from '../../_shared/supabase-client.js';
 import { callInference, parseInferenceJSON, isoNow, clamp } from '../../_shared/utils.js';
 
@@ -270,7 +271,7 @@ async function updateContractRisk(contractId, riskScore, riskLbl, riskDetails) {
  * @param {{ contract_id: string, company_id: string }} input
  * @returns {Promise<{ risk_score: number, risk_label: string, risk_details: object, alerts_created: number }>}
  */
-export async function handler(input) {
+async function handler(input) {
   const { contract_id, company_id } = input;
 
   if (!contract_id) throw new Error('Missing required field: contract_id');
@@ -328,3 +329,22 @@ export async function handler(input) {
 
   return result;
 }
+
+// CLI entry point
+async function main() {
+  try {
+    let raw = '';
+    for await (const chunk of process.stdin) {
+      raw += chunk;
+    }
+    const input = JSON.parse(raw);
+    const result = await handler(input);
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  } catch (err) {
+    console.log(JSON.stringify({ error: err.message }));
+    process.exit(1);
+  }
+}
+
+main();
