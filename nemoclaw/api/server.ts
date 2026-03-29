@@ -79,7 +79,7 @@ app.use('/api/chat', authMiddleware, rateLimit, requireCompanyMatch, chatRouter)
 app.use('/api/ocr', authMiddleware, rateLimit, requireCompanyMatch, ocrRouter)
 
 // ── Unauthenticated analyze for registration (rate-limited, skip_persist forced) ──
-app.post('/api/analyze-public', rateLimit, (req, res, next) => {
+app.use('/api/analyze-public', rateLimit, (req, res, next) => {
   req.body.skip_persist = true
   req.body.company_id = req.body.company_id || null
   next()
