@@ -28,33 +28,42 @@ QUERY DATI:
 - list_employees: { filters?: { search?: string }, limit?: number }
 - get_analytics: {}
 
+ANALISI DOCUMENTI:
+- analyze_document: { document_base64: string, content_type: string, filename?: string }
+  Usa quando l'utente allega un file (PDF, immagine, DOCX) nel messaggio di chat per analisi.
+
 AZIONI:
 - verify_osint: { vat_number?: string, fiscal_code?: string, company_name?: string, counterpart_id?: string }
 - resolve_alert: { alert_id: string }
-- create_alert: { title: string, message: string, type: string, priority?: "low"|"normal"|"urgent" }
+- create_alert: { title: string, message: string, type: string, priority?: "low"|"medium"|"high"|"critical" }
 - search_bandi_external: { query: string, cpv?: string, region?: string }
 - update_contract_status: { contract_id: string, status: "active"|"suspended"|"terminated" }
 - update_invoice_status: { invoice_id: string, status: "paid"|"overdue" }
 
 NESSUNA AZIONE NECESSARIA:
-- none: {} (per domande informative, consulenza legale, spiegazioni — rispondi direttamente)`
+- none: {} (per domande informative, consulenza legale, spiegazioni generiche)`
 
-const INTENT_PROMPT = `Sei l'orchestratore NemoClaw di Terminia. Analizza il messaggio dell'utente e decidi quali strumenti usare.
+const INTENT_PROMPT = `Sei l'orchestratore di Terminia NemoClaw. Il tuo unico compito e classificare l'intento dell'utente e decidere quali strumenti invocare.
 
+CONTESTO CONVERSAZIONE (se disponibile):
+{conversation_context}
+
+CATALOGO STRUMENTI:
 ${TOOL_CATALOG}
 
-Rispondi ESCLUSIVAMENTE con un JSON valido:
+REGOLE:
+1. Rispondi ESCLUSIVAMENTE con un JSON valido. Nessun testo aggiuntivo, nessun commento, nessun markdown.
+2. Se l'utente chiede dati della piattaforma (contratti, fatture, alert, controparti, dipendenti, bandi, analytics), invoca SEMPRE il tool di query corrispondente. Non rispondere mai "non hai dati" senza prima aver verificato con una query.
+3. Se l'utente chiede informazioni generiche, consulenza legale o spiegazioni teoriche, usa "none".
+4. Se servono piu strumenti, elencali tutti nell'array. Esempio: "verifica la controparte e mostrami i contratti" richiede verify_osint + list_contracts.
+5. Se l'utente allega un documento (indicato da [DOCUMENTO ALLEGATO] nel messaggio), usa analyze_document.
+6. Non inventare parametri non presenti nel messaggio dell'utente. Usa valori di default dove necessario.
+
+FORMATO RISPOSTA (unico formato accettato):
 {
-  "tools": [
-    { "name": "nome_tool", "params": { ... } }
-  ],
-  "reasoning": "breve spiegazione del perché hai scelto questi tool"
-}
-
-Se l'utente chiede informazioni generiche, consulenza legale, o spiegazioni, usa:
-{ "tools": [{ "name": "none", "params": {} }], "reasoning": "domanda informativa" }
-
-Se servono più tool, elencali tutti. Esempio: "verifica la controparte e mostrami i contratti con lei" → verify_osint + list_contracts con search.`
+  "tools": [{ "name": "nome_tool", "params": { ... } }],
+  "reasoning": "breve motivazione della scelta"
+}`
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tool execution
@@ -417,6 +426,72 @@ const toolExecutors: Record<string, ToolExecutor> = {
   async none() {
     return { tool: 'none', success: true, data: null }
   },
+
+  async analyze_document(params, companyId) {
+    try {
+      const { chatCompletion: inference } = await import('./inference.ts')
+      const base64 = params.document_base64 as string
+      const contentType = params.content_type as string || 'application/pdf'
+      const filename = params.filename as string || 'documento'
+
+      // For images, use OCR model
+      const isImage = contentType.startsWith('image/')
+      const model = isImage ? 'numarkdown' : 'nemotron-orchestrator'
+
+      let extractedText = ''
+
+      if (isImage) {
+        // Send to OCR model with vision
+        extractedText = await inference({
+          model,
+          messages: [
+            { role: 'user', content: [
+              { type: 'text', text: 'Estrai tutto il testo da questa immagine. Restituisci solo il testo estratto, senza commenti.' },
+              { type: 'image_url', image_url: { url: `data:${contentType};base64,${base64}` } },
+            ] },
+          ],
+          max_tokens: 4096,
+        })
+      } else {
+        // For PDF/DOCX, use the analyze endpoint logic
+        const analyzeRoute = await import('../routes/analyze.ts')
+        // Call internal analysis
+        const response = await fetch(`http://localhost:${process.env.PORT || 3100}/api/analyze-public`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            document_base64: base64,
+            content_type: contentType,
+            company_id: companyId,
+            skip_persist: true,
+          }),
+        })
+        const result = await response.json()
+        return {
+          tool: 'analyze_document',
+          success: true,
+          data: {
+            filename,
+            content_type: contentType,
+            analysis: result,
+          },
+        }
+      }
+
+      return {
+        tool: 'analyze_document',
+        success: true,
+        data: {
+          filename,
+          content_type: contentType,
+          extracted_text: extractedText.slice(0, 4000),
+          method: isImage ? 'ocr' : 'text_extraction',
+        },
+      }
+    } catch (err) {
+      return { tool: 'analyze_document', success: false, data: null, error: (err as Error).message }
+    }
+  },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -441,13 +516,14 @@ export async function orchestrate(
   let toolCalls: ToolCall[] = []
 
   try {
+    const promptWithContext = INTENT_PROMPT.replace(
+      '{conversation_context}',
+      conversationContext || 'Nessun contesto precedente disponibile.',
+    )
     const classifyMessages = [
-      { role: 'system' as const, content: INTENT_PROMPT },
+      { role: 'system' as const, content: promptWithContext },
+      { role: 'user' as const, content: userMessage },
     ]
-    if (conversationContext) {
-      classifyMessages.push({ role: 'user' as const, content: `Contesto conversazione recente:\n${conversationContext}` })
-    }
-    classifyMessages.push({ role: 'user' as const, content: userMessage })
 
     const raw = await chatCompletion({
       model: 'nemotron-nano',
@@ -472,8 +548,24 @@ export async function orchestrate(
   // ── Step 2: Execute tools ─────────────────────────────────────────────
   const results: ToolResult[] = []
 
+  // Extract attachment data from orchestrator message (if present)
+  const attachmentMatch = userMessage.match(/__ATTACHMENT_BASE64__:([\s\S]+?)\n__ATTACHMENT_CONTENT_TYPE__:(.+)$/)
+  const attachmentBase64 = attachmentMatch?.[1]
+  const attachmentContentType = attachmentMatch?.[2]
+  // Clean user message for display (remove attachment markers)
+  const cleanMessage = userMessage.replace(/__ATTACHMENT_BASE64__:[\s\S]+$/, '').trim()
+
   for (const call of toolCalls) {
     if (call.name === 'none') continue
+
+    // Inject attachment data into analyze_document params
+    if (call.name === 'analyze_document' && attachmentBase64) {
+      call.params = {
+        ...call.params,
+        document_base64: attachmentBase64,
+        content_type: attachmentContentType || call.params.content_type,
+      }
+    }
 
     const executor = toolExecutors[call.name]
     if (!executor) {
@@ -502,7 +594,7 @@ export async function orchestrate(
         (typeof r.data === 'object' && r.data !== null && Object.values(r.data as Record<string, unknown>).every(
           v => v === null || v === 0 || (Array.isArray(v) && v.length === 0)
         ))
-      const emptyNote = isEmpty ? ' ⚠️ NESSUN DATO TROVATO — l\'utente non ha ancora dati in questa sezione.' : ''
+      const emptyNote = isEmpty ? ' [VUOTO] Nessun dato presente per questa sezione.' : ''
       return `[RISULTATO: ${r.tool}]${emptyNote}\n${truncated}`
     })
 
@@ -518,10 +610,10 @@ export async function orchestrate(
     })
 
     const emptyWarning = allEmpty
-      ? '\n\n⚠️ ATTENZIONE: TUTTI i risultati sono VUOTI. L\'utente probabilmente ha un account nuovo senza dati. NON inventare dati — suggerisci come iniziare a usare la piattaforma.'
+      ? '\n\nATTENZIONE CRITICA: TUTTI i risultati delle query sono VUOTI. L\'utente non ha ancora dati nel sistema. E VIETATO inventare, simulare o ipotizzare dati. Rispondi indicando che non sono presenti dati e suggerisci come iniziare a utilizzare la piattaforma.'
       : ''
 
-    contextBlock = `\n\n--- DATI DALLA PIATTAFORMA (risultati reali) ---\n${sections.join('\n\n')}\n--- FINE DATI ---\n\nIstruzioni: Usa ESCLUSIVAMENTE QUESTI dati reali per rispondere. Cita nomi, importi, date, punteggi specifici. NON inventare dati aggiuntivi. Se i risultati sono vuoti, dillo chiaramente. Se un'azione è stata eseguita (resolve_alert, update_*), conferma all'utente.${emptyWarning}`
+    contextBlock = `\n\n--- DATI DALLA PIATTAFORMA (risultati reali delle query eseguite) ---\n${sections.join('\n\n')}\n--- FINE DATI ---\n\nDIRETTIVA: Basa la tua risposta ESCLUSIVAMENTE sui dati sopra riportati. Cita valori, nomi, date e importi esattamente come appaiono. Non aggiungere dati non presenti. Se un risultato e vuoto, dichiaralo esplicitamente. Se un'azione e stata eseguita, confermala con i dettagli dell'operazione.${emptyWarning}`
   }
 
   return { toolResults: results, contextBlock }

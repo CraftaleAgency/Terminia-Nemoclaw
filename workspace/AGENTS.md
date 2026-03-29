@@ -1,29 +1,37 @@
 # AGENTS
 
-## Skill Orchestration
+## Orchestrazione competenze
 
-Terminia operates as a skill-based agent system. When processing user requests:
+Terminia opera come sistema ad agenti basato su competenze. Il flusso di elaborazione segue pipeline definite.
 
-### Contract Upload Flow
-1. **document-preprocessor** — Extract text from uploaded file
-2. **contract-classify** — Classify contract type and identify parties
-3. **contract-extract** — Deep extraction of clauses and obligations
-4. **contract-risk-score** — Calculate risk assessment
-5. For each counterpart found: trigger OSINT verification (osint-cf, osint-vat, osint-anac-casellario)
+### Pipeline analisi contratto
+1. **document-preprocessor** — Estrazione testo dal file caricato (PDF, DOCX, immagini via OCR)
+2. **contract-classify** — Classificazione tipo contratto e identificazione parti coinvolte
+3. **contract-extract** — Estrazione approfondita di clausole, obblighi, scadenze, milestone
+4. **contract-risk-score** — Calcolo punteggio di rischio (0-100) con generazione alert
+5. Per ogni controparte individuata: verifica OSINT automatica (osint-cf, osint-vat, osint-anac-casellario)
 
-### BandoRadar Flow (automated daily)
-1. **bandi-sync-anac** — Import new Italian tenders
-2. **bandi-sync-ted** — Import new EU tenders
-3. **bandi-match** — Score all new tenders against company profile
-4. Generate alerts for matches > 80%
+### Pipeline BandoRadar (automatizzata, esecuzione giornaliera)
+1. **bandi-sync-anac** — Importazione nuovi bandi italiani da ANAC OpenData
+2. **bandi-sync-ted** — Importazione nuovi bandi europei da TED Europa
+3. **bandi-match** — Calcolo punteggio di compatibilita con il profilo aziendale
+4. Generazione automatica alert per compatibilita superiore all'80%
 
-### Safety Guidelines
-- Never expose Supabase service role key or internal API credentials
-- Never perform OSINT on individual employees without explicit consent (GDPR)
-- Always flag when a legal interpretation requires professional verification
-- Cache external API results to minimize calls (VIES: 30 days, ANAC: 7 days)
+### Pipeline notifiche (automatizzata, esecuzione giornaliera ore 00:00)
+1. Verifica alert con scadenza odierna o giorno successivo
+2. Verifica contratti in scadenza
+3. Verifica obblighi e milestone in scadenza
+4. Verifica fatture con pagamento in scadenza
+5. Invio email riepilogativa via Resend ai membri del team aziendale
 
-### Memory Conventions
-- Store contract analysis summaries in daily memory notes
-- Track counterpart reliability score changes over time
-- Note new bandi matches and user decisions (participated/skipped)
+### Direttive di sicurezza
+- Non divulgare mai chiavi di servizio Supabase o credenziali API interne
+- Non eseguire verifiche OSINT su dipendenti senza consenso esplicito (conformita GDPR)
+- Segnalare sempre quando un'interpretazione legale richiede verifica professionale
+- Utilizzare cache per i risultati delle API esterne (VIES: 30 giorni, ANAC: 7 giorni)
+- Non inventare mai dati: ogni risposta deve essere basata esclusivamente su risultati reali delle query
+
+### Convenzioni di memoria
+- Salvare i sommari delle analisi contrattuali nel profilo utente
+- Tracciare le variazioni del punteggio di affidabilita delle controparti nel tempo
+- Registrare le corrispondenze dei bandi e le decisioni dell'utente (partecipato/ignorato)

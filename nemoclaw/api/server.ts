@@ -8,6 +8,7 @@ import osintRouter from './routes/osint.ts'
 import chatRouter from './routes/chat.ts'
 import ocrRouter from './routes/ocr.ts'
 import documentsRouter from './routes/documents.ts'
+import conversationsRouter from './routes/conversations.ts'
 import { chatCompletion } from './lib/inference.ts'
 import { startNotifierSchedule, runNotifierJob } from './lib/notifier.ts'
 
@@ -99,6 +100,7 @@ app.use('/api/analyze-public', rateLimit, (req, res, next) => {
 
 // ── Document upload (public for registration, rate-limited) ─────────────────
 app.use('/api/documents', rateLimit, documentsRouter)
+app.use('/api/conversations', rateLimit, conversationsRouter)
 
 // ── Global error handler ────────────────────────────────────────────────────
 app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
