@@ -9,6 +9,7 @@ import chatRouter from './routes/chat.ts'
 import ocrRouter from './routes/ocr.ts'
 import documentsRouter from './routes/documents.ts'
 import { chatCompletion } from './lib/inference.ts'
+import { startNotifierSchedule, runNotifierJob } from './lib/notifier.ts'
 
 const app = express()
 const PORT = process.env.PORT || 3100
@@ -35,6 +36,15 @@ app.use(express.json({ limit: '50mb' }))
 // ── Health endpoint (no auth) ───────────────────────────────────────────────
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', version: VERSION, timestamp: new Date().toISOString() })
+})
+
+// ── Manual notifier trigger (protected by shared secret) ────────────────────
+app.post('/api/notifier/run', (req: Request, res: Response) => {
+  const secret = req.headers['x-cron-secret'] || req.query.secret
+  if (secret !== (process.env.CRON_SECRET || 'terminia-cron-2024')) {
+    return res.status(403).json({ error: 'Non autorizzato' })
+  }
+  void runNotifierJob().then(result => res.json(result))
 })
 
 // ── Rate limiting (basic in-memory) ─────────────────────────────────────────
@@ -108,7 +118,10 @@ const server = app.listen(PORT, () => {
   console.log(`   CORS: ${allowedOrigins.join(', ')}`)
   console.log(`   LiteLLM: ${process.env.LITELLM_URL || 'http://litellm-proxy:4000'}`)
   console.log(`   Supabase: ${process.env.SUPABASE_URL ? '✓' : '✗ (missing)'}`)
+  console.log(`   Resend: ${process.env.RESEND_API_KEY ? '✓' : '✗ (missing)'}`)
 
+  // Start daily notifier cron
+  startNotifierSchedule()
   void (async () => {
     const registrationModel = process.env.REGISTRATION_MODEL || 'nemotron-orchestrator'
     try {
