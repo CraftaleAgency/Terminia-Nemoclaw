@@ -19,7 +19,7 @@ const { PDFParse } = require('pdf-parse')
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/tiff'])
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-const REGISTRATION_MODEL = process.env.REGISTRATION_MODEL || 'nemotron-nano'
+const REGISTRATION_MODEL = process.env.REGISTRATION_MODEL || 'nemotron-orchestrator'
 
 const router = Router()
 

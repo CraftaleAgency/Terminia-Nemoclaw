@@ -106,7 +106,7 @@ const server = app.listen(PORT, () => {
   console.log(`   Supabase: ${process.env.SUPABASE_URL ? '✓' : '✗ (missing)'}`)
 
   void (async () => {
-    const registrationModel = process.env.REGISTRATION_MODEL || 'nemotron-nano'
+    const registrationModel = process.env.REGISTRATION_MODEL || 'nemotron-orchestrator'
     try {
       await chatCompletion({
         model: registrationModel,
@@ -115,7 +115,7 @@ const server = app.listen(PORT, () => {
           { role: 'user', content: 'warmup' },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 32,
+        max_tokens: 96,
       })
       console.log(`   Registration model warm: ${registrationModel}`)
     } catch (err) {
