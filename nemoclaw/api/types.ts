@@ -70,6 +70,19 @@ export interface AnalyzeContractResponse {
   counterpart_id?: string | null
   warnings?: string[]
   source_text?: string
+  registration_profile?: RegistrationProfile
+}
+
+export interface RegistrationProfile {
+  account_type_hint?: 'person' | 'company' | 'unknown'
+  document_kind?: string | null
+  full_name?: string | null
+  company_name?: string | null
+  fiscal_code?: string | null
+  vat_number?: string | null
+  city?: string | null
+  sector?: string | null
+  confidence?: number | null
 }
 
 export interface VerifyOSINTResponse {

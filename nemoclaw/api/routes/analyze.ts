@@ -6,6 +6,7 @@ import type {
   ContractExtraction,
   ContractRisk,
   CounterpartInfo,
+  RegistrationProfile,
 } from '../types.ts'
 import { Router } from 'express'
 import { createRequire } from 'module'
@@ -25,6 +26,17 @@ const MAX_TEXT_LENGTH = 12000
 const FISCAL_CODE_REGEX = /\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/i
 const VAT_LABEL_REGEX = /(?:PARTITA\s*IVA|P\.?\s*IVA|PIVA|VAT)\D{0,12}(\d{11})/i
 const VAT_FALLBACK_REGEX = /\b\d{11}\b/
+const REGISTRATION_SECTORS = [
+  'Informatica e Tecnologia',
+  'Manifatturiero',
+  'Servizi Professionali',
+  'Commercio',
+  'Edilizia e Costruzioni',
+  'Trasporti e Logistica',
+  'Alimentare',
+  'Sanitario',
+  'Altro',
+] as const
 
 function cleanExtractedText(text: string): string {
   return text
@@ -42,7 +54,36 @@ function extractLabeledValue(text: string, labels: string[]): string | null {
   return match?.[1]?.trim() || null
 }
 
-function extractRegistrationClassification(text: string): ContractClassification {
+function inferSectorFromText(text: string): string | null {
+  const lower = text.toLowerCase()
+  const sectorKeywords: [string, string][] = [
+    ['informatica', 'Informatica e Tecnologia'],
+    ['tecnologia', 'Informatica e Tecnologia'],
+    ['software', 'Informatica e Tecnologia'],
+    ['manifattura', 'Manifatturiero'],
+    ['produzione', 'Manifatturiero'],
+    ['consulenza', 'Servizi Professionali'],
+    ['professionale', 'Servizi Professionali'],
+    ['commercio', 'Commercio'],
+    ['vendita', 'Commercio'],
+    ['fornitura', 'Commercio'],
+    ['edilizia', 'Edilizia e Costruzioni'],
+    ['costruzione', 'Edilizia e Costruzioni'],
+    ['appalto', 'Edilizia e Costruzioni'],
+    ['trasporto', 'Trasporti e Logistica'],
+    ['logistica', 'Trasporti e Logistica'],
+    ['alimentare', 'Alimentare'],
+    ['sanitario', 'Sanitario'],
+    ['medico', 'Sanitario'],
+  ]
+
+  for (const [keyword, sector] of sectorKeywords) {
+    if (lower.includes(keyword)) return sector
+  }
+  return null
+}
+
+function extractRegistrationProfileFallback(text: string): RegistrationProfile {
   const cleaned = cleanExtractedText(text)
   const upper = cleaned.toUpperCase()
   const fiscalCode = upper.match(FISCAL_CODE_REGEX)?.[0] || ''
@@ -60,26 +101,89 @@ function extractRegistrationClassification(text: string): ContractClassification
     'Intestato a',
     'Nominativo',
   ])
+  const city = extractLabeledValue(cleaned, [
+    'Comune di residenza',
+    'Città di residenza',
+    'Residenza',
+    'Residente a',
+    'Comune',
+    'Sede legale',
+    'Sede',
+  ])
+  const sector = inferSectorFromText(cleaned)
 
   const isPerson = Boolean(fiscalCode) && !companyName
+  return {
+    account_type_hint: isPerson ? 'person' : (companyName || vat ? 'company' : 'unknown'),
+    document_kind: isPerson ? 'identity_or_personal_vat' : 'company_registration',
+    full_name: counterpartName || null,
+    company_name: companyName || null,
+    fiscal_code: fiscalCode || null,
+    vat_number: vat || null,
+    city: city || null,
+    sector,
+    confidence: (fiscalCode || vat || companyName || city) ? 0.8 : 0.2,
+  }
+}
+
+function mergeRegistrationProfile(
+  fallback: RegistrationProfile,
+  parsed: Partial<RegistrationProfile> | null | undefined,
+): RegistrationProfile {
+  const merged: RegistrationProfile = { ...fallback }
+  if (!parsed) return merged
+
+  if (parsed.account_type_hint === 'person' || parsed.account_type_hint === 'company' || parsed.account_type_hint === 'unknown') {
+    merged.account_type_hint = parsed.account_type_hint
+  }
+  if (parsed.document_kind) merged.document_kind = String(parsed.document_kind).trim()
+  if (parsed.full_name) merged.full_name = String(parsed.full_name).trim()
+  if (parsed.company_name) merged.company_name = String(parsed.company_name).trim()
+  if (parsed.city) merged.city = String(parsed.city).trim()
+  if (parsed.sector && REGISTRATION_SECTORS.includes(parsed.sector as typeof REGISTRATION_SECTORS[number])) {
+    merged.sector = parsed.sector
+  }
+  if (parsed.confidence != null && Number.isFinite(Number(parsed.confidence))) {
+    merged.confidence = Number(parsed.confidence)
+  }
+
+  const fiscalCode = parsed.fiscal_code
+    ? String(parsed.fiscal_code).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16)
+    : null
+  if (fiscalCode) merged.fiscal_code = fiscalCode
+
+  const vatNumber = parsed.vat_number
+    ? String(parsed.vat_number).replace(/\D/g, '').slice(0, 11)
+    : null
+  if (vatNumber) merged.vat_number = vatNumber
+
+  return merged
+}
+
+function classificationFromRegistrationProfile(profile: RegistrationProfile): ContractClassification {
   const summaryBits = [
-    fiscalCode ? `CF: ${fiscalCode}` : null,
-    vat ? `P.IVA: ${vat}` : null,
-    companyName ? `Azienda: ${companyName}` : null,
-    counterpartName ? `Persona: ${counterpartName}` : null,
+    profile.fiscal_code ? `CF: ${profile.fiscal_code}` : null,
+    profile.vat_number ? `P.IVA: ${profile.vat_number}` : null,
+    profile.company_name ? `Azienda: ${profile.company_name}` : null,
+    profile.full_name ? `Persona: ${profile.full_name}` : null,
+    profile.city ? `Città: ${profile.city}` : null,
+    profile.sector ? `Settore: ${profile.sector}` : null,
   ].filter(Boolean)
 
+  const isPerson = profile.account_type_hint === 'person'
+    || (Boolean(profile.fiscal_code) && !profile.company_name)
+
   return {
-    contract_type: isPerson ? 'profilo_persona_fisica' : 'profilo_registrazione',
+    contract_type: profile.sector || (isPerson ? 'profilo_persona_fisica' : 'profilo_registrazione'),
     counterpart_type: isPerson ? 'persona_fisica' : 'azienda',
     language: 'it',
-    confidence: summaryBits.length ? 0.95 : 0.2,
+    confidence: profile.confidence ?? (summaryBits.length ? 0.9 : 0.2),
     parties: {
-      company: companyName || undefined,
+      company: profile.company_name || undefined,
       counterpart: {
-        name: counterpartName || companyName || undefined,
-        vat: vat || undefined,
-        cf: fiscalCode || undefined,
+        name: profile.full_name || profile.company_name || undefined,
+        vat: profile.vat_number || undefined,
+        cf: profile.fiscal_code || undefined,
         role: isPerson ? 'persona' : 'azienda',
       },
     },
@@ -88,6 +192,30 @@ function extractRegistrationClassification(text: string): ContractClassification
       : 'Documento acquisito ma senza identificativi chiari estraibili in automatico.',
   }
 }
+
+const REGISTRATION_PROMPT = `Sei un assistente esperto nell'estrazione di dati anagrafici e societari da documenti italiani usati in fase di registrazione.
+
+Analizza il testo del documento e restituisci SOLO un JSON valido con questi campi:
+{
+  "account_type_hint": "person|company|unknown",
+  "document_kind": "identity_or_personal_vat|company_registration|unknown",
+  "full_name": "nome completo persona oppure null",
+  "company_name": "ragione sociale oppure null",
+  "fiscal_code": "codice fiscale se presente oppure null",
+  "vat_number": "partita IVA solo cifre se presente oppure null",
+  "city": "città/comune di residenza o sede legale oppure null",
+  "sector": "uno tra Informatica e Tecnologia, Manifatturiero, Servizi Professionali, Commercio, Edilizia e Costruzioni, Trasporti e Logistica, Alimentare, Sanitario, Altro, oppure null",
+  "confidence": 0.0
+}
+
+Regole:
+- Non inventare dati.
+- Se un dato non è presente chiaramente, usa null.
+- Per "city" restituisci solo il nome della città/comune, senza CAP, provincia o indirizzo.
+- Per "vat_number" usa solo 11 cifre.
+- Per "fiscal_code" usa il formato standard italiano in maiuscolo.
+- Se il documento è di persona fisica, privilegia full_name, fiscal_code, city, vat_number.
+- Se il documento è aziendale, privilegia company_name, vat_number, city, sector.`
 
 // ── System prompts ──────────────────────────────────────────────────────────
 
@@ -327,8 +455,28 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
   const errors: string[] = []
 
   if (skip_persist) {
-    const classification = extractRegistrationClassification(truncated)
-    if (!classification.parties?.company && !classification.parties?.counterpart?.vat && !classification.parties?.counterpart?.cf) {
+    const fallbackProfile = extractRegistrationProfileFallback(truncated)
+    let registrationProfile = fallbackProfile
+
+    try {
+      const raw = await chatCompletion({
+        messages: [
+          { role: 'system', content: REGISTRATION_PROMPT },
+          { role: 'user', content: truncated },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 700,
+      })
+      registrationProfile = mergeRegistrationProfile(
+        fallbackProfile,
+        parseInferenceJSON(raw) as Partial<RegistrationProfile>,
+      )
+    } catch (err) {
+      errors.push(`Parsing registrazione AI fallito: ${(err as Error).message}`)
+    }
+
+    const classification = classificationFromRegistrationProfile(registrationProfile)
+    if (!classification.parties?.company && !classification.parties?.counterpart?.vat && !classification.parties?.counterpart?.cf && !registrationProfile.city) {
       errors.push('Nessun identificativo chiaro trovato nel documento di registrazione')
     }
 
@@ -338,6 +486,7 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
       risk: { risk_score: null, risk_label: null, dimensions: null, top_risks: [], recommendations_it: [] },
       counterpart_id: null,
       source_text: truncated,
+      registration_profile: registrationProfile,
     }
     if (errors.length) result.warnings = errors
     return res.json(result)
