@@ -43,6 +43,9 @@ function cleanExtractedText(text: string): string {
   return text
     .replace(/\u0000/g, ' ')
     .replace(/\r/g, '')
+    // Strip markdown table header rows ("| Campo | Dati |", "| --- | --- |")
+    .replace(/^\|[\s]*Campo[\s]*\|[\s]*(?:Dati|Valore|Descrizione|Info)[\s]*\|[\s]*$/gim, '')
+    .replace(/^\|[\s:]*-+[\s:]*(?:\|[\s:]*-+[\s:]*)+\|?[\s]*$/gm, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
@@ -183,6 +186,23 @@ function extractRegistrationProfileFallback(text: string): RegistrationProfile {
   const city = extractCityFromText(cleaned)
   const sector = inferSectorFromText(cleaned)
 
+  // Heuristic for company size from employee count or form
+  let companySize: 'micro' | 'small' | 'medium' | 'large' | null = null
+  const empMatch = cleaned.match(/(\d+)\s*(?:dipendenti|lavoratori|addetti|collaboratori)/i)
+  if (empMatch) {
+    const n = parseInt(empMatch[1], 10)
+    if (n <= 9) companySize = 'micro'
+    else if (n <= 49) companySize = 'small'
+    else if (n <= 249) companySize = 'medium'
+    else companySize = 'large'
+  }
+  // Heuristic from legal form
+  if (!companySize) {
+    const upper = cleaned.toUpperCase()
+    if (/\bS\.?P\.?A\.?\b/.test(upper) || /\bS\.?A\.?P\.?A\.?\b/.test(upper)) companySize = 'large'
+    else if (/\bS\.?R\.?L\.?\b/.test(upper)) companySize = 'small'
+  }
+
   const isPerson = Boolean(fiscalCode) && !companyName
   return {
     account_type_hint: isPerson ? 'person' : (companyName || vat ? 'company' : 'unknown'),
@@ -193,6 +213,7 @@ function extractRegistrationProfileFallback(text: string): RegistrationProfile {
     vat_number: vat || null,
     city: city || null,
     sector,
+    company_size: companySize,
     confidence: (fiscalCode || vat || companyName || city) ? 0.8 : 0.2,
   }
 }
@@ -209,10 +230,22 @@ function mergeRegistrationProfile(
   }
   if (parsed.document_kind) merged.document_kind = String(parsed.document_kind).trim()
   if (parsed.full_name) merged.full_name = String(parsed.full_name).trim()
-  if (parsed.company_name) merged.company_name = String(parsed.company_name).trim()
+  if (parsed.company_name) {
+    const name = String(parsed.company_name).trim()
+    // Reject table-header artifacts and label echoes
+    const rejected = ['campo dati', 'campo', 'dati', 'valore', 'descrizione', 'ragione sociale',
+      'denominazione', 'info', 'n/a', 'null', 'none', 'n.d.', 'nd']
+    if (!rejected.includes(name.toLowerCase()) && name.length > 2) {
+      merged.company_name = name
+    }
+  }
   if (parsed.city) merged.city = String(parsed.city).trim()
   if (parsed.sector && REGISTRATION_SECTORS.includes(parsed.sector as typeof REGISTRATION_SECTORS[number])) {
     merged.sector = parsed.sector
+  }
+  const validSizes = ['micro', 'small', 'medium', 'large']
+  if (parsed.company_size && validSizes.includes(parsed.company_size)) {
+    merged.company_size = parsed.company_size as 'micro' | 'small' | 'medium' | 'large'
   }
   if (parsed.confidence != null && Number.isFinite(Number(parsed.confidence))) {
     merged.confidence = Number(parsed.confidence)
@@ -271,15 +304,17 @@ Per un documento fiscale/visura: estrai i dati dell'intestatario.
 Per qualsiasi altro contratto: estrai i dati dell'azienda o persona committente/cliente.
 
 Rispondi SOLO con JSON valido (nessun testo aggiuntivo):
-{"account_type_hint":"person|company|unknown","document_kind":"identity_or_personal_vat|company_registration|labor_contract|unknown","full_name":null,"company_name":null,"fiscal_code":null,"vat_number":null,"city":null,"sector":null,"confidence":0}
+{"account_type_hint":"person|company|unknown","document_kind":"identity_or_personal_vat|company_registration|labor_contract|unknown","full_name":null,"company_name":null,"fiscal_code":null,"vat_number":null,"city":null,"sector":null,"company_size":null,"confidence":0}
 
 Regole TASSATIVE:
-- company_name: ragione sociale ESATTA come appare nel documento (es. "NEXUS SOLUTIONS S.p.A.") — NON il termine "Ragione Sociale" o simili etichette
+- company_name: ragione sociale ESATTA come appare nel documento (es. "NEXUS SOLUTIONS S.p.A."). NON il termine "Ragione Sociale", "Campo", "Dati" o simili etichette di tabella/colonna
+- ATTENZIONE: le tabelle markdown hanno righe di intestazione come "| Campo | Dati |" — questi sono NOMI DI COLONNE, non valori. Ignora sempre le intestazioni di tabella
 - full_name: nome e cognome della persona fisica (solo per contratti a persona fisica)
 - fiscal_code: codice fiscale 16 caratteri alfanumerici, maiuscolo
 - vat_number: partita IVA 11 cifre numeriche senza spazi
-- city: solo nome della città/comune (es. "Milano")
+- city: solo nome della citta/comune (es. "Milano")
 - sector: settore merceologico o null
+- company_size: dimensione azienda basata su numero dipendenti o fatturato: "micro" (1-9), "small" (10-49), "medium" (50-249), "large" (250+). Se non determinabile, null
 - confidence: 0.0-1.0 basato sulla chiarezza dei dati estratti`
 
 // ── System prompts ──────────────────────────────────────────────────────────
@@ -587,11 +622,15 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
     try {
       const updates: Record<string, unknown> = {
         contract_type: classification.contract_type,
+        ai_confidence: classification.confidence ?? null,
+        ai_summary: classification.summary_it || null,
+        language: classification.language || 'it',
+        ai_extracted_at: isoNow(),
         updated_at: isoNow(),
       }
       const { data: current } = await supabase
         .from('contracts').select('status').eq('id', contract_id).maybeSingle()
-      if (!current?.status || current.status === 'uploaded') {
+      if (!current?.status || current.status === 'uploaded' || current.status === 'draft') {
         updates.status = 'classified'
       }
       await supabase.from('contracts').update(updates).eq('id', contract_id)
@@ -641,11 +680,13 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
         start_date: dates?.start_date || null,
         end_date: dates?.end_date || null,
         signed_date: dates?.signing_date || null,
+        effective_date: dates?.start_date || null,
         value: value?.total_value ?? null,
         currency: value?.currency || 'EUR',
         payment_terms: value?.payment_terms_days ?? null,
         auto_renewal: renewal?.auto_renewal ?? false,
         renewal_notice_days: renewal?.renewal_notice_days ?? null,
+        renewal_duration_months: renewal?.renewal_duration_months ?? null,
         status: 'active',
         updated_at: isoNow(),
       }).eq('id', contract_id)
@@ -739,15 +780,33 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
     errors.push(`Rischio fallito: ${(err as Error).message}`)
   }
 
-  // Persist risk
-  if (contract_id && risk.risk_score != null && !skip_persist) {
+  // Persist risk + store full analysis JSON
+  if (contract_id && !skip_persist) {
     try {
-      await supabase.from('contracts').update({
-        risk_score: risk.risk_score,
-        ai_summary: risk.recommendations_it?.join(' • ') || null,
+      // Build comprehensive ai_summary: classification summary + risk recommendations
+      const summaryParts: string[] = []
+      if (classification.summary_it) summaryParts.push(classification.summary_it)
+      if (risk.recommendations_it?.length) {
+        summaryParts.push('Raccomandazioni: ' + risk.recommendations_it.join(' | '))
+      }
+
+      // Store the full analysis result as JSON in notes for the Analysis tab
+      const fullAnalysisJson = JSON.stringify({
+        classification,
+        extraction,
+        risk,
+        counterpart_id: counterpartId,
+        analyzed_at: isoNow(),
+      })
+
+      const riskUpdate: Record<string, unknown> = {
+        risk_score: risk.risk_score ?? null,
+        ai_summary: summaryParts.join('\n\n') || null,
+        notes: fullAnalysisJson,
         status: 'active',
         updated_at: isoNow(),
-      }).eq('id', contract_id)
+      }
+      await supabase.from('contracts').update(riskUpdate).eq('id', contract_id)
     } catch (err) {
       errors.push(`DB rischio: ${(err as Error).message}`)
     }

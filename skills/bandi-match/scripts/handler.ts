@@ -1,5 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { supabase } from '../../_shared/supabase-client.ts'
+import type { Database, Json } from '../../_shared/database.ts'
 import {
   computeMatchScore,
   callInference,
@@ -323,16 +324,16 @@ async function writeBandoScore(bando: BandoRow, profile: CompanyProfile, scores:
     scored_at: isoNow(),
   };
 
-  const updatePayload: Record<string, unknown> = {
+  const updatePayload = {
     match_score: totalScore,
     score_sector: scores.sector,
     score_size: scores.size,
     score_geo: scores.geo,
     score_requirements: scores.requirements,
     score_feasibility: scores.feasibility,
-    company_profile_snapshot: snapshot,
-    scored_at: isoNow(),
-  };
+    company_profile_snapshot: snapshot as unknown as Json,
+    last_updated_at: isoNow(),
+  } satisfies Database['public']['Tables']['bandi']['Update'];
 
   const { error } = await supabase
     .from('bandi')
@@ -351,18 +352,19 @@ async function writeBandoScore(bando: BandoRow, profile: CompanyProfile, scores:
 
 async function createAlert(bando: BandoRow, profile: CompanyProfile, score: number, reasoning: string): Promise<boolean> {
   const truncatedTitle = (bando.title || 'Bando senza titolo').slice(0, 80);
-  const message = `Match ${score}%: ${reasoning || 'Alta compatibilità con il profilo aziendale.'}`;
+  const description = `Match ${score}%: ${reasoning || 'Alta compatibilità con il profilo aziendale.'}`;
 
   const { error } = await supabase.from('alerts').insert({
-    type: 'new_bando_match',
-    priority: 'high',
+    alert_type: 'bando_match',
+    priority: score >= 90 ? 'critical' : 'high',
     company_id: profile.company_id,
+    bando_id: bando.id,
     title: `Nuovo bando compatibile: ${truncatedTitle}`,
-    message,
-    related_entity_type: 'bando',
-    related_entity_id: bando.id,
-    created_at: isoNow(),
-  });
+    description,
+    trigger_date: isoNow(),
+    triggered_at: isoNow(),
+    status: 'pending',
+  } satisfies Database['public']['Tables']['alerts']['Insert']);
 
   if (error) {
     console.warn(`[bandi-match] Failed to create alert for bando ${bando.id}:`, error.message);

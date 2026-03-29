@@ -625,10 +625,10 @@ export async function orchestrate(
     })
 
     const emptyWarning = allEmpty
-      ? '\n\nATTENZIONE CRITICA: TUTTI i risultati delle query sono VUOTI. L\'utente non ha ancora dati nel sistema. E VIETATO inventare, simulare o ipotizzare dati. Rispondi indicando che non sono presenti dati e suggerisci come iniziare a utilizzare la piattaforma.'
+      ? '\n\nATTENZIONE CRITICA: TUTTI i risultati delle query sono VUOTI. L\'utente non ha ancora dati nel sistema. E ASSOLUTAMENTE VIETATO inventare, simulare, ipotizzare, stimare o arrotondare dati. Rispondi indicando chiaramente che non sono presenti dati per la richiesta effettuata. Non fornire numeri, importi, date o nomi fittizi nemmeno come esempio. Suggerisci come iniziare a utilizzare la piattaforma con un link alla sezione pertinente.'
       : ''
 
-    contextBlock = `\n\n--- DATI DALLA PIATTAFORMA (risultati reali delle query eseguite) ---\n${sections.join('\n\n')}\n--- FINE DATI ---\n\nDIRETTIVA: Basa la tua risposta ESCLUSIVAMENTE sui dati sopra riportati. Cita valori, nomi, date e importi esattamente come appaiono. Non aggiungere dati non presenti. Se un risultato e vuoto, dichiaralo esplicitamente. Se un'azione e stata eseguita, confermala con i dettagli dell'operazione.${emptyWarning}`
+    contextBlock = `\n\n--- DATI DALLA PIATTAFORMA (risultati reali delle query eseguite) ---\n${sections.join('\n\n')}\n--- FINE DATI ---\n\nDIRETTIVA: Basa la tua risposta ESCLUSIVAMENTE sui dati sopra riportati. Cita valori, nomi, date e importi esattamente come appaiono. Non aggiungere dati non presenti. Se un risultato e vuoto o marcato [VUOTO], dichiaralo esplicitamente — NON inventare una risposta positiva. Se un campo e null o assente, scrivi "dato non disponibile". Se un'azione e stata eseguita, confermala con i dettagli dell'operazione.${emptyWarning}`
   }
 
   const toolNames = toolCalls.filter(t => t.name !== 'none').map(t => t.name)

@@ -2115,6 +2115,39 @@ export type Database = {
           },
         ]
       }
+      sync_metadata: {
+        Row: {
+          created_at: string | null
+          id: string
+          last_synced_at: string
+          records_errored: number | null
+          records_skipped: number | null
+          records_synced: number | null
+          source: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          last_synced_at?: string
+          records_errored?: number | null
+          records_skipped?: number | null
+          records_synced?: number | null
+          source: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          last_synced_at?: string
+          records_errored?: number | null
+          records_skipped?: number | null
+          records_synced?: number | null
+          source?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       user_documents: {
         Row: {
           company_id: string | null

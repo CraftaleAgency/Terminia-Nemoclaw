@@ -34,8 +34,8 @@ services:
     # NemoClaw REST API — Express server (Node 22, TypeScript)
     terminia-api:
         build:
-            context: ./api
-            dockerfile: Dockerfile
+            context: ..
+            dockerfile: nemoclaw/api/Dockerfile
         container_name: terminia-api
         restart: unless-stopped
         ports:
@@ -43,6 +43,7 @@ services:
         environment:
             - PORT=3100
             - NODE_ENV=production
+            - SKILLS_DIR=/app/skills
             # Supabase — use internal Docker DNS (kong on dokploy-network)
             - SUPABASE_URL=${SUPABASE_URL}
             - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}

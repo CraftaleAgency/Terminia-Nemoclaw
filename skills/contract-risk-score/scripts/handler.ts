@@ -1,6 +1,9 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { supabase } from '../../_shared/supabase-client.ts'
+import type { Database } from '../../_shared/database.ts'
 import { callInference, parseInferenceJSON, isoNow, clamp } from '../../_shared/utils.ts'
+
+type AlertInsert = Database['public']['Tables']['alerts']['Insert']
 
 const RISK_LABELS: Array<[number, string]> = [
   [76, 'critical'],
@@ -81,16 +84,7 @@ interface RiskDetails {
   total: number
 }
 
-interface AlertRow {
-  company_id: string
-  type: string
-  title: string
-  message: string
-  priority: string
-  related_entity_type: string
-  related_entity_id: string
-  created_at: string
-}
+// AlertInsert from database.ts replaces the old AlertRow interface
 
 interface HandlerResult {
   risk_score: number
@@ -279,33 +273,35 @@ function buildAlerts(
   riskScore: number,
   obligations: ObligationRow[],
   milestones: MilestoneRow[],
-): AlertRow[] {
+): AlertInsert[] {
   const now = isoNow();
-  const alerts: AlertRow[] = [];
+  const alerts: AlertInsert[] = [];
 
   if (riskScore >= 70) {
     alerts.push({
       company_id: companyId,
-      type: 'high_risk_contract',
+      alert_type: 'high_risk_contract',
       title: 'Contratto ad alto rischio rilevato',
-      message: `Il contratto ha ottenuto un punteggio di rischio di ${riskScore}/100. Si consiglia una revisione legale immediata.`,
-      priority: 'urgent',
-      related_entity_type: 'contract',
-      related_entity_id: contractId,
-      created_at: now,
+      description: `Il contratto ha ottenuto un punteggio di rischio di ${riskScore}/100. Si consiglia una revisione legale immediata.`,
+      priority: 'critical',
+      contract_id: contractId,
+      trigger_date: now,
+      triggered_at: now,
+      status: 'pending',
     });
   }
 
   if (contract.auto_renewal && contract.renewal_notice_days == null) {
     alerts.push({
       company_id: companyId,
-      type: 'auto_renewal_warning',
+      alert_type: 'auto_renewal_warning',
       title: 'Rinnovo automatico silenzioso',
-      message: 'Il contratto prevede un rinnovo automatico senza un periodo di preavviso definito. Rischio di rinnovo involontario.',
+      description: 'Il contratto prevede un rinnovo automatico senza un periodo di preavviso definito. Rischio di rinnovo involontario.',
       priority: 'high',
-      related_entity_type: 'contract',
-      related_entity_id: contractId,
-      created_at: now,
+      contract_id: contractId,
+      trigger_date: now,
+      triggered_at: now,
+      status: 'pending',
     });
   }
 
@@ -314,15 +310,16 @@ function buildAlerts(
     if (days <= 30) {
       alerts.push({
         company_id: companyId,
-        type: 'obligation_deadline',
+        alert_type: 'obligation_deadline',
         title: days < 0
           ? `Obbligo scaduto: ${o.description?.slice(0, 60) || 'N/D'}`
           : `Scadenza obbligo tra ${days} giorni`,
-        message: `Obbligo: "${o.description || 'N/D'}". Scadenza: ${o.deadline}.`,
+        description: `Obbligo: "${o.description || 'N/D'}". Scadenza: ${o.deadline}.`,
         priority: priorityFromDays(days),
-        related_entity_type: 'contract',
-        related_entity_id: contractId,
-        created_at: now,
+        contract_id: contractId,
+        trigger_date: o.deadline || now,
+        triggered_at: now,
+        status: 'pending',
       });
     }
   }
@@ -332,13 +329,15 @@ function buildAlerts(
     if (days <= 30) {
       alerts.push({
         company_id: companyId,
-        type: 'milestone_approaching',
+        alert_type: 'milestone_approaching',
         title: `Milestone in avvicinamento: ${m.title?.slice(0, 60) || 'N/D'}`,
-        message: `Milestone "${m.title || 'N/D'}" in scadenza il ${m.due_date}.${m.amount != null ? ` Importo: €${m.amount}` : ''}`,
+        description: `Milestone "${m.title || 'N/D'}" in scadenza il ${m.due_date}.${m.amount != null ? ` Importo: €${m.amount}` : ''}`,
         priority: 'medium',
-        related_entity_type: 'contract',
-        related_entity_id: contractId,
-        created_at: now,
+        contract_id: contractId,
+        milestone_id: m.id || null,
+        trigger_date: m.due_date || now,
+        triggered_at: now,
+        status: 'pending',
       });
     }
   }
@@ -346,7 +345,7 @@ function buildAlerts(
   return alerts;
 }
 
-async function insertAlerts(alerts: AlertRow[]): Promise<number> {
+async function insertAlerts(alerts: AlertInsert[]): Promise<number> {
   if (!alerts.length) return 0;
   const { error } = await supabase.from('alerts').insert(alerts);
   if (error) throw new Error(`Failed to insert alerts: ${error.message}`);

@@ -1,6 +1,9 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { supabase } from '../../_shared/supabase-client.ts'
 import { isoNow } from '../../_shared/utils.ts'
+import type { Database } from '../../_shared/database.ts'
+
+type BandoInsert = Database['public']['Tables']['bandi']['Insert']
 
 const TED_SEARCH_URL = 'https://api.ted.europa.eu/v3/notices/search';
 const TED_API_KEY = process.env.TED_API_KEY || 'dcabd92b303f415fa4fd23ae877a90a1';
@@ -20,6 +23,7 @@ interface HandlerInput {
   days_back?: number
   cpv?: string
   country?: string
+  company_id?: string
 }
 
 interface TedNotice {
@@ -42,25 +46,6 @@ interface TedApiResponse {
   totalPages?: number
   hasMore?: boolean
   [key: string]: unknown
-}
-
-interface BandoRow {
-  title: string
-  description: string
-  authority_name: string
-  base_value: number | null
-  currency: string
-  cpv_codes: string[]
-  procedure_type: string | null
-  publication_date: string | null
-  deadline: string | null
-  nuts_code: string | null
-  source: string
-  source_url: string
-  source_id: string
-  raw_data: TedNotice
-  is_active: boolean
-  scraped_at: string
 }
 
 interface HandlerResult {
@@ -123,7 +108,7 @@ function textOf(val: unknown): string {
   return '';
 }
 
-function mapNotice(notice: TedNotice): BandoRow | null {
+function mapNotice(notice: TedNotice, companyId: string): BandoInsert | null {
   const noticeId = notice.ND;
   if (!noticeId) return null;
 
@@ -148,12 +133,12 @@ function mapNotice(notice: TedNotice): BandoRow | null {
     cpv_codes: cpvCodes,
     procedure_type: null,
     publication_date: notice.DT ?? null,
-    deadline: null,
+    deadline: notice.DT ?? '2099-12-31',
     nuts_code: null,
     source: 'ted',
     source_url: `https://ted.europa.eu/en/notice/-/${noticeId}`,
-    source_id: String(noticeId),
-    raw_data: notice,
+    external_id: String(noticeId),
+    company_id: companyId,
     is_active: true,
     scraped_at: new Date().toISOString(),
   };
@@ -182,25 +167,25 @@ function hasMorePages(body: TedApiResponse, currentPage: number, totalFetched: n
 // Supabase operations
 // ---------------------------------------------------------------------------
 
-async function fetchExistingIds(sourceIds: string[]): Promise<Set<string>> {
-  if (sourceIds.length === 0) return new Set();
+async function fetchExistingIds(externalIds: string[]): Promise<Set<string>> {
+  if (externalIds.length === 0) return new Set();
 
   const existing = new Set<string>();
   let failedChunks = 0;
 
-  for (let i = 0; i < sourceIds.length; i += 500) {
-    const chunk = sourceIds.slice(i, i + 500);
+  for (let i = 0; i < externalIds.length; i += 500) {
+    const chunk = externalIds.slice(i, i + 500);
     const { data, error } = await supabase
       .from('bandi')
-      .select('source_id')
+      .select('external_id')
       .eq('source', 'ted')
-      .in('source_id', chunk);
+      .in('external_id', chunk);
 
     if (error) {
       console.error(`[bandi-sync-ted] fetchExistingIds chunk ${i}–${i + chunk.length} failed:`, error.message);
       failedChunks++;
     } else if (data) {
-      (data as Array<{ source_id: string }>).forEach((row) => existing.add(row.source_id));
+      (data as Array<{ external_id: string }>).forEach((row) => existing.add(row.external_id));
     }
   }
   if (failedChunks > 0) {
@@ -209,7 +194,7 @@ async function fetchExistingIds(sourceIds: string[]): Promise<Set<string>> {
   return existing;
 }
 
-async function batchInsert(rows: BandoRow[]): Promise<number> {
+async function batchInsert(rows: BandoInsert[]): Promise<number> {
   let inserted = 0;
   for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
     const batch = rows.slice(i, i + INSERT_BATCH_SIZE);
@@ -246,6 +231,10 @@ async function markExpired(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function handler(input: HandlerInput): Promise<HandlerResult> {
+  if (!input.company_id) {
+    throw new Error('company_id is required');
+  }
+  const companyId = input.company_id;
   const daysBack = input?.days_back || 1;
   const now = new Date();
   const since = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
@@ -278,10 +267,10 @@ async function handler(input: HandlerInput): Promise<HandlerResult> {
       totalFetched += rawNotices.length;
 
       // Map
-      const mapped: BandoRow[] = [];
+      const mapped: BandoInsert[] = [];
       for (const raw of rawNotices) {
         try {
-          const row = mapNotice(raw);
+          const row = mapNotice(raw, companyId);
           if (row) mapped.push(row);
           else errors++;
         } catch {
@@ -290,7 +279,7 @@ async function handler(input: HandlerInput): Promise<HandlerResult> {
       }
 
       // Dedup
-      const candidateIds = mapped.map((r) => r.source_id);
+      const candidateIds = mapped.map((r) => r.external_id).filter((id): id is string => id != null);
       let existingIds: Set<string>;
       try {
         existingIds = await fetchExistingIds(candidateIds);
@@ -300,9 +289,9 @@ async function handler(input: HandlerInput): Promise<HandlerResult> {
         break;
       }
 
-      const toInsert: BandoRow[] = [];
+      const toInsert: BandoInsert[] = [];
       for (const row of mapped) {
-        if (existingIds.has(row.source_id)) {
+        if (row.external_id && existingIds.has(row.external_id)) {
           skippedDuplicates++;
         } else {
           toInsert.push(row);

@@ -1,6 +1,9 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { supabase } from '../../_shared/supabase-client.ts'
 import { isoNow } from '../../_shared/utils.ts'
+import type { Database } from '../../_shared/database.ts'
+
+type BandoInsert = Database['public']['Tables']['bandi']['Insert']
 
 const ANAC_OCDS_RECORDS = 'https://dati.anticorruzione.it/opendata/ocds/api/records';
 const API_TIMEOUT_MS = 15000;
@@ -12,7 +15,7 @@ const INSERT_CHUNK_SIZE = 50;
 // ---------------------------------------------------------------------------
 
 interface HandlerInput {
-  company_id?: string
+  company_id: string
 }
 
 interface OcdsValue {
@@ -77,27 +80,7 @@ interface OcdsApiResponse {
   size: number
 }
 
-interface BandoRow {
-  title: string
-  description: string
-  authority_name: string
-  authority_code: string | null
-  source: 'anac'
-  source_url: string
-  source_id: string
-  cig: string
-  base_value: number | null
-  currency: string
-  cpv_codes: string[]
-  procedure_type: string | null
-  publication_date: string | null
-  deadline: string | null
-  nuts_code: string | null
-  contract_category: string | null
-  raw_data: OcdsRecord
-  is_active: boolean
-  scraped_at: string
-}
+// BandoInsert from database.ts replaces the old BandoRow interface
 
 interface HandlerResult {
   synced: number
@@ -137,7 +120,7 @@ async function fetchPage(from: string, to: string, page: number): Promise<OcdsAp
 // Record mapping
 // ---------------------------------------------------------------------------
 
-function mapRecord(record: OcdsRecord): BandoRow | null {
+function mapRecord(record: OcdsRecord, companyId: string): BandoInsert | null {
   if (!record.ocid) return null;
 
   const release: OcdsRelease = record.releases?.length
@@ -149,19 +132,19 @@ function mapRecord(record: OcdsRecord): BandoRow | null {
     description: release.tender?.description || '',
     authority_name: release.buyer?.name || 'N/D',
     authority_code: release.buyer?.identifier?.id || null,
-    source: 'anac' as const,
+    source: 'anac',
     source_url: `https://dati.anticorruzione.it/opendata/ocds/api/records/${record.ocid}`,
-    source_id: record.ocid,
+    external_id: record.ocid,
     cig: record.ocid.split('-').pop() || record.ocid,
     base_value: release.tender?.value?.amount ?? null,
     currency: release.tender?.value?.currency || 'EUR',
     cpv_codes: release.tender?.items?.map(i => i.classification?.id).filter(Boolean) as string[] || [],
     procedure_type: release.tender?.procurementMethod || null,
     publication_date: release.releaseDate || record.releaseDate || null,
-    deadline: release.tender?.tenderPeriod?.endDate || null,
+    deadline: release.tender?.tenderPeriod?.endDate || '2099-12-31',
     nuts_code: release.tender?.items?.[0]?.deliveryLocation?.region || null,
     contract_category: release.tender?.mainProcurementCategory || null,
-    raw_data: record,
+    company_id: companyId,
     is_active: true,
     scraped_at: new Date().toISOString(),
   };
@@ -180,15 +163,15 @@ async function fetchExistingSourceIds(ids: string[]): Promise<Set<string>> {
     const chunk = ids.slice(i, i + 500);
     const { data, error } = await supabase
       .from('bandi')
-      .select('source_id')
+      .select('external_id')
       .eq('source', 'anac')
-      .in('source_id', chunk);
+      .in('external_id', chunk);
 
     if (error) {
       console.error(`[bandi-sync-anac] fetchExistingSourceIds chunk ${i}–${i + chunk.length} failed:`, error.message);
       failedChunks++;
     } else if (data) {
-      (data as Array<{ source_id: string }>).forEach((row) => existing.add(row.source_id));
+      (data as Array<{ external_id: string }>).forEach((row) => existing.add(row.external_id));
     }
   }
   if (failedChunks > 0) {
@@ -197,7 +180,7 @@ async function fetchExistingSourceIds(ids: string[]): Promise<Set<string>> {
   return existing;
 }
 
-async function insertBatch(records: BandoRow[]): Promise<number> {
+async function insertBatch(records: BandoInsert[]): Promise<number> {
   let inserted = 0;
   for (let i = 0; i < records.length; i += INSERT_CHUNK_SIZE) {
     const chunk = records.slice(i, i + INSERT_CHUNK_SIZE);
@@ -232,7 +215,11 @@ async function markExpiredBandi(): Promise<void> {
 // Main handler
 // ---------------------------------------------------------------------------
 
-async function handler(_input: HandlerInput = {}): Promise<HandlerResult> {
+async function handler(input: HandlerInput): Promise<HandlerResult> {
+  if (!input.company_id) {
+    throw new Error('company_id is required');
+  }
+
   const result: HandlerResult = {
     synced: 0, skipped_duplicates: 0, errors: 0,
     source: 'anac', pages_fetched: 0, total_remote: 0,
@@ -263,10 +250,10 @@ async function handler(_input: HandlerInput = {}): Promise<HandlerResult> {
     if (!body.records?.length) break;
 
     // Map records
-    const mapped: BandoRow[] = [];
+    const mapped: BandoInsert[] = [];
     for (const rec of body.records) {
       try {
-        const row = mapRecord(rec);
+        const row = mapRecord(rec, input.company_id);
         if (row) mapped.push(row);
         else result.errors++;
       } catch {
@@ -276,8 +263,8 @@ async function handler(_input: HandlerInput = {}): Promise<HandlerResult> {
 
     if (!mapped.length) { page++; continue; }
 
-    // Dedup against existing source_ids
-    const candidateIds = mapped.map((r) => r.source_id);
+    // Dedup against existing external_ids
+    const candidateIds = mapped.map((r) => r.external_id).filter(Boolean) as string[];
     let existingIds: Set<string>;
     try {
       existingIds = await fetchExistingSourceIds(candidateIds);
@@ -287,9 +274,9 @@ async function handler(_input: HandlerInput = {}): Promise<HandlerResult> {
       continue;
     }
 
-    const toInsert: BandoRow[] = [];
+    const toInsert: BandoInsert[] = [];
     for (const row of mapped) {
-      if (existingIds.has(row.source_id)) {
+      if (row.external_id && existingIds.has(row.external_id)) {
         result.skipped_duplicates++;
       } else {
         toInsert.push(row);

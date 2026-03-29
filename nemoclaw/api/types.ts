@@ -82,6 +82,7 @@ export interface RegistrationProfile {
   vat_number?: string | null
   city?: string | null
   sector?: string | null
+  company_size?: 'micro' | 'small' | 'medium' | 'large' | null
   confidence?: number | null
 }
 

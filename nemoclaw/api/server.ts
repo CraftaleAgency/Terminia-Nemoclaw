@@ -9,6 +9,7 @@ import chatRouter from './routes/chat.ts'
 import ocrRouter from './routes/ocr.ts'
 import documentsRouter from './routes/documents.ts'
 import conversationsRouter from './routes/conversations.ts'
+import bandiRouter from './routes/bandi.ts'
 import { chatCompletion } from './lib/inference.ts'
 import { startNotifierSchedule, runNotifierJob } from './lib/notifier.ts'
 
@@ -90,6 +91,7 @@ app.use('/api/analyze', authMiddleware, rateLimit, requireCompanyMatch, analyzeR
 app.use('/api/osint', authMiddleware, rateLimit, requireCompanyMatch, osintRouter)
 app.use('/api/chat', authMiddleware, rateLimit, requireCompanyMatch, chatRouter)
 app.use('/api/ocr', authMiddleware, rateLimit, requireCompanyMatch, ocrRouter)
+app.use('/api/bandi', authMiddleware, rateLimit, requireCompanyMatch, bandiRouter)
 
 // ── Unauthenticated analyze for registration (rate-limited, skip_persist forced) ──
 app.use('/api/analyze-public', rateLimit, (req, res, next) => {

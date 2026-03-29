@@ -73,14 +73,72 @@ router.post('/upload', async (req: Request, res: Response) => {
     })
 
     if (dbError) {
-      // Table might not exist yet — log but don't fail the upload
       console.warn('[documents] DB insert warning:', dbError.message)
+    }
+
+    // For registration documents: create a contract record automatically
+    let contractId: string | null = null
+    if (source === 'registration') {
+      try {
+        // Get user's company_id from the users table
+        const { data: userData } = await supabase
+          .from('users')
+          .select('company_id')
+          .eq('id', user_id)
+          .single()
+
+        if (userData?.company_id) {
+          const contractTitle = (filename || 'Documento Costitutivo').replace(/\.[^.]+$/, '')
+
+          // Create draft contract
+          const { data: contract } = await supabase
+            .from('contracts')
+            .insert({
+              company_id: userData.company_id,
+              created_by: user_id,
+              title: contractTitle,
+              contract_type: 'altro',
+              status: 'draft',
+            })
+            .select('id')
+            .single()
+
+          if (contract) {
+            contractId = contract.id
+
+            // Link document to contract
+            await supabase.from('contract_documents').insert({
+              contract_id: contract.id,
+              file_name: filename || `document.${ext}`,
+              file_url: storagePath,
+              file_size: buffer.length,
+              file_type: ext === 'pdf' ? 'pdf' : ext === 'docx' ? 'docx' : 'other',
+              document_role: 'original',
+              is_current: true,
+              uploaded_by: user_id,
+            })
+
+            // Store raw text for later analysis
+            const rawText = buffer.toString('utf8').slice(0, 20000) || ''
+            if (rawText.length > 50) {
+              await supabase.from('contracts').update({
+                raw_text: rawText,
+              }).eq('id', contract.id)
+            }
+
+            console.log(`[documents] Registration contract ${contract.id} created for user ${user_id}`)
+          }
+        }
+      } catch (err) {
+        console.warn('[documents] Registration contract creation:', (err as Error).message)
+      }
     }
 
     return res.json({
       success: true,
       path: storagePath,
       size: buffer.length,
+      contract_id: contractId,
     })
   } catch (err) {
     console.error('[documents] Error:', (err as Error).message)
