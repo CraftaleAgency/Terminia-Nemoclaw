@@ -214,13 +214,13 @@ fi
 echo ""
 
 # ── Step 9: Configure BandoRadar cron ────────────────────────────────────────
-echo "⏰ Step 9: Configuring BandoRadar daily sync..."
+echo "⏰ Step 9: Configuring BandoRadar monthly sync (1st of each month)..."
 openshell sandbox connect "$SANDBOX_NAME" -- sh -c \
-    'echo "0 6 * * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-sync-anac/scripts/handler.js >> /tmp/bandi-sync.log 2>&1
-30 6 * * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-sync-ted/scripts/handler.js >> /tmp/bandi-sync.log 2>&1
-0 7 * * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-match/scripts/handler.js >> /tmp/bandi-match.log 2>&1" | crontab -' 2>/dev/null || \
+    'echo "0 6 1 * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-sync-anac/scripts/handler.js >> /tmp/bandi-sync.log 2>&1
+30 6 1 * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-sync-ted/scripts/handler.js >> /tmp/bandi-sync.log 2>&1
+0 7 1 * * echo \"{}\" | /sandbox/.openclaw/skills/bandi-match/scripts/handler.js >> /tmp/bandi-match.log 2>&1" | crontab -' 2>/dev/null || \
     echo -e "${YELLOW}⚠ Cron setup failed — configure manually inside sandbox${NC}"
-echo "  Schedule: 06:00 ANAC sync → 06:30 TED sync → 07:00 Match scoring"
+echo "  Schedule: 1st of month — 06:00 ANAC sync → 06:30 TED sync → 07:00 Match scoring"
 echo ""
 
 # ── Step 10: Configure Telegram bot bridge ───────────────────────────────────

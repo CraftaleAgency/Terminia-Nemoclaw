@@ -15,6 +15,19 @@ Le tue competenze:
 - Normativa italiana (Codice Civile, D.Lgs. 50/2016, GDPR)
 - Bandi di gara e appalti pubblici
 
+Azioni che l'utente può fare nella piattaforma Terminia (suggeriscile quando pertinente):
+- 📄 **Carica un contratto** (PDF o immagine scansionata) → analisi automatica con classificazione, estrazione clausole, obblighi, scadenze e punteggio di rischio
+- 🔍 **Verifica una controparte** → controllo VIES (partita IVA EU), validazione Codice Fiscale, interrogazione Casellario ANAC per annotazioni
+- 📊 **Dashboard Contratti** → panoramica di tutti i contratti attivi, in scadenza, valore totale e rischi
+- ⚠️ **Alerts** → notifiche automatiche per scadenze imminenti, rinnovi automatici, obblighi in scadenza
+- 🎯 **BandoRadar** → monitoraggio mensile di bandi ANAC e TED Europa con match scoring automatico
+- 💰 **Fatture** → gestione fatture attive/passive collegate ai contratti, monitoraggio pagamenti
+- 👥 **Controparti** → anagrafica fornitori/clienti/partner con punteggio affidabilità
+- 👤 **Dipendenti** → gestione contratti di lavoro (tempo indeterminato, determinato, co.co.co., stage)
+- 📈 **Analytics** → statistiche su valore contratti, distribuzione rischio, scadenze, trend
+
+Se l'utente chiede cosa può fare, elenca queste funzionalità. Quando rispondi a domande su contratti o controparti, suggerisci le azioni pertinenti (es. "Puoi caricare il contratto nella sezione Contratti per un'analisi dettagliata").
+
 Regole:
 - Rispondi sempre in italiano
 - Sii conciso ma preciso
@@ -30,18 +43,25 @@ router.post('/', async (req: Request<object, ChatResponse, ChatRequest>, res: Re
     return res.status(400).json({ error: 'messages è obbligatorio' })
   }
 
-  // Build company context
+  // Build company context with richer data for better suggestions
   let contextNote = ''
   if (company_id) {
     try {
-      const [contracts, alerts] = await Promise.all([
+      const [contracts, alerts, counterparts, expiring, bandi] = await Promise.all([
         supabase.from('contracts').select('id', { count: 'exact', head: true }).eq('company_id', company_id),
         supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('company_id', company_id).eq('resolved', false),
+        supabase.from('counterparts').select('id', { count: 'exact', head: true }).eq('company_id', company_id),
+        supabase.from('contracts').select('id', { count: 'exact', head: true }).eq('company_id', company_id).eq('status', 'expiring'),
+        supabase.from('bandi').select('id', { count: 'exact', head: true }).eq('company_id', company_id).eq('is_active', true),
       ])
-      const contractCount = contracts.count ?? 0
-      const alertCount = alerts.count ?? 0
-      if (contractCount || alertCount) {
-        contextNote = `\n\nContesto azienda: ${contractCount} contratti, ${alertCount} alert attivi.`
+      const parts: string[] = []
+      if (contracts.count) parts.push(`${contracts.count} contratti`)
+      if (expiring.count) parts.push(`${expiring.count} in scadenza`)
+      if (counterparts.count) parts.push(`${counterparts.count} controparti`)
+      if (alerts.count) parts.push(`${alerts.count} alert attivi`)
+      if (bandi.count) parts.push(`${bandi.count} bandi attivi`)
+      if (parts.length) {
+        contextNote = `\n\nContesto azienda: ${parts.join(', ')}.`
       }
     } catch {
       // non-fatal
