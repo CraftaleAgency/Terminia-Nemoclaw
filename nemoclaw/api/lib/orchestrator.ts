@@ -84,16 +84,16 @@ const toolExecutors: Record<string, ToolExecutor> = {
 
     let query = supabase
       .from('contracts')
-      .select('id, title, counterpart_name, status, expiration_date, risk_score, risk_level, contract_value, contract_type, signing_date, start_date, end_date')
+      .select('id, title, counterpart_id, status, end_date, risk_score, value, contract_type, signed_date, start_date')
       .eq('company_id', companyId)
 
     if (filters.status) query = query.eq('status', filters.status as string)
     if (filters.risk_min) query = query.gte('risk_score', filters.risk_min as number)
     if (filters.search) {
-      query = query.or(`title.ilike.%${filters.search}%,counterpart_name.ilike.%${filters.search}%`)
+      query = query.ilike('title', `%${filters.search}%`)
     }
 
-    const { data, error } = await query.order('expiration_date', { ascending: true }).limit(limit)
+    const { data, error } = await query.order('end_date', { ascending: true }).limit(limit)
     if (error) return { tool: 'list_contracts', success: false, data: null, error: error.message }
     return { tool: 'list_contracts', success: true, data: { contracts: data, count: data?.length || 0 } }
   },
@@ -112,9 +112,9 @@ const toolExecutors: Record<string, ToolExecutor> = {
     if (params.search) {
       const { data, error } = await supabase
         .from('contracts')
-        .select('id, title, counterpart_name, status, risk_score, contract_value')
+        .select('id, title, status, risk_score, value')
         .eq('company_id', companyId)
-        .or(`title.ilike.%${params.search}%,counterpart_name.ilike.%${params.search}%`)
+        .ilike('title', `%${params.search}%`)
         .limit(5)
       if (error) return { tool: 'get_contract', success: false, data: null, error: error.message }
       return { tool: 'get_contract', success: true, data }
@@ -128,10 +128,10 @@ const toolExecutors: Record<string, ToolExecutor> = {
 
     let query = supabase
       .from('counterparts')
-      .select('id, name, vat_number, fiscal_code, reliability_score, osint_verified, osint_last_check, category, role')
+      .select('id, name, vat_number, fiscal_code, reliability_score, data_verified_at, type')
       .eq('company_id', companyId)
 
-    if (filters.unverified_only) query = query.or('osint_verified.is.null,osint_verified.eq.false')
+    if (filters.unverified_only) query = query.is('data_verified_at', null)
     if (filters.search) {
       query = query.or(`name.ilike.%${filters.search}%,vat_number.ilike.%${filters.search}%`)
     }
@@ -155,7 +155,7 @@ const toolExecutors: Record<string, ToolExecutor> = {
     if (params.search) {
       const { data, error } = await supabase
         .from('counterparts')
-        .select('id, name, vat_number, fiscal_code, reliability_score, osint_verified')
+        .select('id, name, vat_number, fiscal_code, reliability_score, data_verified_at')
         .eq('company_id', companyId)
         .or(`name.ilike.%${params.search}%,vat_number.ilike.%${params.search}%,fiscal_code.ilike.%${params.search}%`)
         .limit(5)
@@ -171,11 +171,11 @@ const toolExecutors: Record<string, ToolExecutor> = {
 
     let query = supabase
       .from('invoices')
-      .select('id, invoice_number, counterpart_name, amount, due_date, status, direction, issue_date')
+      .select('id, invoice_number, counterpart_id, amount_gross, due_date, payment_status, invoice_type, invoice_date')
       .eq('company_id', companyId)
 
-    if (filters.status) query = query.eq('status', filters.status as string)
-    if (filters.direction) query = query.eq('direction', filters.direction as string)
+    if (filters.status) query = query.eq('payment_status', filters.status as string)
+    if (filters.direction) query = query.eq('invoice_type', filters.direction as string)
 
     const { data, error } = await query.order('due_date', { ascending: true }).limit(limit)
     if (error) return { tool: 'list_invoices', success: false, data: null, error: error.message }
@@ -188,13 +188,17 @@ const toolExecutors: Record<string, ToolExecutor> = {
 
     let query = supabase
       .from('alerts')
-      .select('id, title, description, type, severity, created_at, resolved, related_entity_type, related_entity_id')
+      .select('id, title, description, alert_type, priority, status, trigger_date, contract_id, counterpart_id')
       .eq('company_id', companyId)
 
-    if (filters.resolved !== undefined) query = query.eq('resolved', filters.resolved as boolean)
-    if (filters.type) query = query.eq('type', filters.type as string)
+    if (filters.resolved !== undefined) {
+      query = filters.resolved
+        ? query.in('status', ['handled', 'dismissed'])
+        : query.in('status', ['pending', 'snoozed', 'escalated'])
+    }
+    if (filters.type) query = query.eq('alert_type', filters.type as string)
 
-    const { data, error } = await query.order('created_at', { ascending: false }).limit(limit)
+    const { data, error } = await query.order('trigger_date', { ascending: false }).limit(limit)
     if (error) return { tool: 'list_alerts', success: false, data: null, error: error.message }
     return { tool: 'list_alerts', success: true, data: { alerts: data, count: data?.length || 0 } }
   },
@@ -205,7 +209,7 @@ const toolExecutors: Record<string, ToolExecutor> = {
 
     let query = supabase
       .from('bandi')
-      .select('id, title, stazione_appaltante, importo, scadenza, source, cpv_codes, match_score, status, description')
+      .select('id, title, authority_name, base_value, deadline, source, cpv_codes, match_score, participation_status, description')
       .eq('company_id', companyId)
       .eq('is_active', true)
 
@@ -328,7 +332,7 @@ const toolExecutors: Record<string, ToolExecutor> = {
   async resolve_alert(params, companyId) {
     const { error } = await supabase
       .from('alerts')
-      .update({ resolved: true, resolved_at: new Date().toISOString() })
+      .update({ status: 'handled', handled_at: new Date().toISOString() })
       .eq('id', params.alert_id as string)
       .eq('company_id', companyId)
     if (error) return { tool: 'resolve_alert', success: false, data: null, error: error.message }
@@ -336,15 +340,18 @@ const toolExecutors: Record<string, ToolExecutor> = {
   },
 
   async create_alert(params, companyId) {
+    const now = new Date().toISOString()
     const { data, error } = await supabase
       .from('alerts')
       .insert({
         company_id: companyId,
         title: params.title as string,
-        message: params.message as string,
-        type: params.type as string || 'custom',
-        priority: params.priority as string || 'normal',
-        created_at: new Date().toISOString(),
+        description: params.message as string,
+        alert_type: (params.type as string) || 'obligation_due',
+        priority: (params.priority as string) || 'medium',
+        trigger_date: now,
+        triggered_at: now,
+        status: 'pending',
       })
       .select('id, title')
       .single()
@@ -393,10 +400,10 @@ const toolExecutors: Record<string, ToolExecutor> = {
 
   async update_invoice_status(params, companyId) {
     const updates: Record<string, unknown> = {
-      status: params.status as string,
+      payment_status: params.status as string,
       updated_at: new Date().toISOString(),
     }
-    if (params.status === 'paid') updates.paid_date = new Date().toISOString()
+    if (params.status === 'paid') updates.payment_date = new Date().toISOString()
 
     const { error } = await supabase
       .from('invoices')

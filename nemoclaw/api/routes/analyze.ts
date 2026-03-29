@@ -266,7 +266,6 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
     try {
       const updates: Record<string, unknown> = {
         contract_type: classification.contract_type,
-        counterpart_type: classification.counterpart_type,
         updated_at: isoNow(),
       }
       const { data: current } = await supabase
@@ -320,13 +319,13 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
       await supabase.from('contracts').update({
         start_date: dates?.start_date || null,
         end_date: dates?.end_date || null,
-        signing_date: dates?.signing_date || null,
-        total_value: value?.total_value ?? null,
+        signed_date: dates?.signing_date || null,
+        value: value?.total_value ?? null,
         currency: value?.currency || 'EUR',
-        payment_terms_days: value?.payment_terms_days ?? null,
+        payment_terms: value?.payment_terms_days ?? null,
         auto_renewal: renewal?.auto_renewal ?? false,
         renewal_notice_days: renewal?.renewal_notice_days ?? null,
-        status: 'extracted',
+        status: 'active',
         updated_at: isoNow(),
       }).eq('id', contract_id)
     } catch (err) {
@@ -339,13 +338,12 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
         const now = isoNow()
         await supabase.from('clauses').insert(
           extraction.clauses.map(c => ({
-            contract_id, company_id,
-            clause_type: c.clause_type || 'altro',
-            title: c.title || null,
-            summary: c.summary_it || null,
+            contract_id,
+            clause_type: c.clause_type || 'other',
+            original_text: c.original_text?.slice(0, 2000) || c.title || 'N/A',
+            simplified_text: c.summary_it || null,
             risk_level: c.risk_level || 'low',
-            risk_reason: c.risk_reason || null,
-            original_text: c.original_text?.slice(0, 200) || null,
+            risk_explanation: c.risk_reason || null,
             created_at: now,
           }))
         )
@@ -360,12 +358,12 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
         const now = isoNow()
         await supabase.from('obligations').insert(
           extraction.obligations.map(o => ({
-            contract_id, company_id,
-            description: o.description || null,
-            responsible_party: o.responsible_party || null,
-            deadline: o.deadline || null,
-            recurring: o.recurring ?? false,
-            frequency: o.frequency || null,
+            contract_id,
+            description: o.description || 'N/A',
+            party: o.responsible_party === 'controparte' ? 'theirs' : 'mine',
+            due_date: o.deadline || null,
+            recurrence: o.recurring ? (o.frequency || 'monthly') : null,
+            status: 'pending',
             created_at: now,
           }))
         )
@@ -380,11 +378,12 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
         const now = isoNow()
         await supabase.from('milestones').insert(
           extraction.milestones.map(m => ({
-            contract_id, company_id,
-            title: m.title || null,
+            contract_id,
+            title: m.title || 'Milestone',
             due_date: m.due_date || null,
             amount: m.amount ?? null,
             description: m.description || null,
+            status: 'upcoming',
             created_at: now,
           }))
         )
@@ -424,9 +423,8 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
     try {
       await supabase.from('contracts').update({
         risk_score: risk.risk_score,
-        risk_label: risk.risk_label,
-        risk_details: { dimensions: risk.dimensions, top_risks: risk.top_risks } as unknown as string,
-        status: 'analyzed',
+        ai_summary: risk.recommendations_it?.join(' • ') || null,
+        status: 'active',
         updated_at: isoNow(),
       }).eq('id', contract_id)
     } catch (err) {
@@ -438,13 +436,14 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
       try {
         await supabase.from('alerts').insert({
           company_id,
-          type: 'high_risk_contract',
+          contract_id,
+          alert_type: 'contract_expiry',
           title: 'Contratto ad alto rischio rilevato',
-          message: `Il contratto ha ottenuto un punteggio di rischio di ${risk.risk_score}/100. Si consiglia una revisione legale immediata.`,
-          priority: 'urgent',
-          related_entity_type: 'contract',
-          related_entity_id: contract_id,
-          created_at: isoNow(),
+          description: `Il contratto ha ottenuto un punteggio di rischio di ${risk.risk_score}/100. Si consiglia una revisione legale immediata.`,
+          priority: 'critical',
+          trigger_date: isoNow(),
+          triggered_at: isoNow(),
+          status: 'pending',
         })
       } catch {
         // non-fatal

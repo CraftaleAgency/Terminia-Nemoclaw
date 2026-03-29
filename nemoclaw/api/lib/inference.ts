@@ -80,7 +80,7 @@ export async function* chatCompletionStream({
   const controller = new AbortController()
   const timeoutMs = model?.includes('numarkdown') || model?.includes('ocr')
     ? LITELLM_OCR_TIMEOUT_MS
-    : LITELLM_OCR_TIMEOUT_MS // streaming uses longer timeout by default
+    : LITELLM_TIMEOUT_MS // regular timeout for non-OCR models
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   let res: globalThis.Response

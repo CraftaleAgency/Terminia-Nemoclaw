@@ -76,7 +76,7 @@ setInterval(() => {
 app.use('/api/analyze', authMiddleware, rateLimit, requireCompanyMatch, analyzeRouter)
 app.use('/api/osint', authMiddleware, rateLimit, requireCompanyMatch, osintRouter)
 app.use('/api/chat', authMiddleware, rateLimit, requireCompanyMatch, chatRouter)
-app.use('/api/ocr', authMiddleware, rateLimit, ocrRouter)
+app.use('/api/ocr', authMiddleware, rateLimit, requireCompanyMatch, ocrRouter)
 
 // ── Global error handler ────────────────────────────────────────────────────
 app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
