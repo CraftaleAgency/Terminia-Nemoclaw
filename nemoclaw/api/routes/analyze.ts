@@ -194,9 +194,9 @@ async function findOrCreateCounterpart(companyId: string, cp: CounterpartInfo): 
 // ── Route handler ───────────────────────────────────────────────────────────
 
 router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeContractRequest>, res: Response) => {
-  const { document_text, document_base64, content_type, company_id, contract_id } = req.body
+  const { document_text, document_base64, content_type, company_id, contract_id, skip_persist } = req.body as AnalyzeContractRequest & { skip_persist?: boolean }
 
-  if (!company_id) {
+  if (!company_id && !skip_persist) {
     return res.status(400).json({ error: 'company_id è obbligatorio' })
   }
 
@@ -262,7 +262,7 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
   }
 
   // Persist classification
-  if (contract_id) {
+  if (contract_id && !skip_persist) {
     try {
       const updates: Record<string, unknown> = {
         contract_type: classification.contract_type,
@@ -282,7 +282,7 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
   // Find or create counterpart
   let counterpartId: string | null = null
   const cp = classification.parties?.counterpart
-  if (cp?.name && (cp.vat || cp.cf)) {
+  if (cp?.name && (cp.vat || cp.cf) && !skip_persist && company_id) {
     try {
       counterpartId = await findOrCreateCounterpart(company_id, cp)
       if (contract_id) {
@@ -313,7 +313,7 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
   }
 
   // Persist extraction
-  if (contract_id) {
+  if (contract_id && !skip_persist) {
     try {
       const { dates, value, renewal } = extraction
       await supabase.from('contracts').update({
@@ -419,7 +419,7 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
   }
 
   // Persist risk
-  if (contract_id && risk.risk_score != null) {
+  if (contract_id && risk.risk_score != null && !skip_persist) {
     try {
       await supabase.from('contracts').update({
         risk_score: risk.risk_score,

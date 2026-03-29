@@ -78,6 +78,13 @@ app.use('/api/osint', authMiddleware, rateLimit, requireCompanyMatch, osintRoute
 app.use('/api/chat', authMiddleware, rateLimit, requireCompanyMatch, chatRouter)
 app.use('/api/ocr', authMiddleware, rateLimit, requireCompanyMatch, ocrRouter)
 
+// ── Unauthenticated analyze for registration (rate-limited, skip_persist forced) ──
+app.post('/api/analyze-public', rateLimit, (req, res, next) => {
+  req.body.skip_persist = true
+  req.body.company_id = req.body.company_id || null
+  next()
+}, analyzeRouter)
+
 // ── Global error handler ────────────────────────────────────────────────────
 app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[error]', err.message)
