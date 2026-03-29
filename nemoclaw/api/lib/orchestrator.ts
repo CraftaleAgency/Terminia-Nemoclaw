@@ -369,31 +369,115 @@ const toolExecutors: Record<string, ToolExecutor> = {
   },
 
   async search_bandi_external(params, companyId) {
-    // Search ANAC OCDS for matching bandi
-    const query = params.query as string
-    const from = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0]
-    const to = new Date().toISOString().split('T')[0]
+    const query = params.query as string || ''
+    const results: unknown[] = []
+    const errors: string[] = []
 
+    // 1. Search TED Europa (primary — more reliable)
     try {
+      const tedQuery = query
+        ? `FT=[${query}]`
+        : 'TD=3'
+      const tedBody: Record<string, unknown> = {
+        query: tedQuery,
+        limit: 10,
+        page: 1,
+        fields: ['ND', 'TI', 'AC', 'PC', 'DT', 'CY', 'MA', 'AU'],
+      }
+      const tedRes = await fetch('https://api.ted.europa.eu/v3/notices/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dcabd92b303f415fa4fd23ae877a90a1',
+        },
+        body: JSON.stringify(tedBody),
+        signal: AbortSignal.timeout(15000),
+      })
+      if (tedRes.ok) {
+        const tedData = await tedRes.json() as { notices?: Array<Record<string, unknown>>; results?: Array<Record<string, unknown>> }
+        const notices = tedData.notices || tedData.results || []
+        for (const n of notices.slice(0, 5)) {
+          const titles = (n.TI || {}) as Record<string, string>
+          const title = titles.ita || titles.eng || Object.values(titles)[0] || 'N/D'
+          const auths = (n.AU || {}) as Record<string, string[]>
+          const authority = (auths.ita || Object.values(auths)[0] || ['N/D'])[0]
+          results.push({
+            source: 'TED Europa',
+            notice_id: n.ND,
+            title,
+            authority,
+            deadline: Array.isArray(n.DT) ? n.DT[0] : n.DT,
+            cpv: n.PC,
+            country: n.CY,
+          })
+        }
+      }
+    } catch (err) {
+      errors.push(`TED: ${(err as Error).message}`)
+    }
+
+    // 2. Search ANAC OCDS (fallback — may be blocked by WAF)
+    try {
+      const from = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0]
+      const to = new Date().toISOString().split('T')[0]
       const url = new URL('https://dati.anticorruzione.it/opendata/ocds/api/records')
       url.searchParams.set('releaseDate_from', from)
       url.searchParams.set('releaseDate_to', to)
       url.searchParams.set('page', '0')
-      url.searchParams.set('size', '20')
+      url.searchParams.set('size', '10')
       if (params.cpv) url.searchParams.set('cpv', params.cpv as string)
-      if (params.region) url.searchParams.set('region', params.region as string)
 
-      const res = await fetch(url.toString(), { signal: AbortSignal.timeout(30000) })
-      if (!res.ok) throw new Error(`ANAC ${res.status}`)
-      const data = await res.json() as { records?: unknown[]; totalCount?: number }
-
-      return {
-        tool: 'search_bandi_external',
-        success: true,
-        data: { results: (data.records || []).slice(0, 10), total: data.totalCount || 0, source: 'ANAC OCDS' },
+      const res = await fetch(url.toString(), {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(15000),
+      })
+      if (res.ok) {
+        const data = await res.json() as { records?: Array<Record<string, unknown>>; totalCount?: number }
+        for (const r of (data.records || []).slice(0, 5)) {
+          const release = (Array.isArray(r.releases) && r.releases.length > 0 ? r.releases[r.releases.length - 1] : {}) as Record<string, unknown>
+          const tender = (release.tender || {}) as Record<string, unknown>
+          const buyer = (release.buyer || {}) as Record<string, unknown>
+          results.push({
+            source: 'ANAC OCDS',
+            ocid: r.ocid,
+            title: (tender.title as string) || 'N/D',
+            authority: (buyer.name as string) || 'N/D',
+            deadline: ((tender.tenderPeriod as Record<string, unknown>)?.endDate as string) || null,
+            value: (tender.value as Record<string, unknown>)?.amount || null,
+            currency: (tender.value as Record<string, unknown>)?.currency || 'EUR',
+          })
+        }
+      } else {
+        errors.push(`ANAC HTTP ${res.status}`)
       }
     } catch (err) {
-      return { tool: 'search_bandi_external', success: false, data: null, error: (err as Error).message }
+      errors.push(`ANAC: ${(err as Error).message}`)
+    }
+
+    // 3. Also search local bandi DB
+    try {
+      let q = supabase.from('bandi').select('id, title, authority_name, source, deadline, base_value, match_score, is_active')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('match_score', { ascending: false, nullsFirst: false })
+        .limit(5)
+      if (query) q = q.ilike('title', `%${query}%`)
+      const { data } = await q
+      if (data?.length) {
+        for (const b of data) {
+          results.push({ source: 'Database locale', ...b })
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    if (results.length === 0 && errors.length > 0) {
+      return { tool: 'search_bandi_external', success: false, data: null, error: errors.join('; ') }
+    }
+
+    return {
+      tool: 'search_bandi_external',
+      success: true,
+      data: { results, total: results.length, sources: errors.length > 0 ? `Parziale (errori: ${errors.join(', ')})` : 'TED + ANAC + DB locale' },
     }
   },
 
