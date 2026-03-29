@@ -79,6 +79,9 @@ services:
             CONTAINER_PREFIX: ${CONTAINER_PREFIX}
         # https://unix.stackexchange.com/a/294837
         entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+        networks:
+            - default
+            - dokploy-network
 
     auth:
         container_name: ${CONTAINER_PREFIX}-auth
@@ -502,3 +505,9 @@ services:
 
 volumes:
     db-config:
+
+networks:
+    default:
+        name: ${CONTAINER_PREFIX}
+    dokploy-network:
+        external: true
