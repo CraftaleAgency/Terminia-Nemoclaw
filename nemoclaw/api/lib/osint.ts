@@ -18,7 +18,7 @@ const VIES_API = 'https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-
 const VIES_API_KEY = process.env.VIES_API_KEY || ''
 const ANAC_SEARCH_URL = 'https://casellario.anticorruzione.it/CasellarioSearch/Search'
 const ANAC_BASE_URL = 'https://casellario.anticorruzione.it'
-const API_TIMEOUT_MS = 5000
+const API_TIMEOUT_MS = 15000
 
 // ── Codice Fiscale ──────────────────────────────────────────────────────────
 
@@ -124,7 +124,7 @@ async function checkViesFallback(vatNumber: string): Promise<Record<string, unkn
       method: 'POST',
       headers: { 'apikey': VIES_API_KEY, 'content-type': 'application/json' },
       body: JSON.stringify({ vat_number: vatNumber }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(15000),
     })
     if (!res.ok) return null
     return await res.json() as Record<string, unknown>
@@ -265,7 +265,7 @@ export async function checkAnac(vatNumber: string | undefined, companyName: stri
   if (companyName) params.set('ragioneSociale', companyName)
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 8000)
+  const timeout = setTimeout(() => controller.abort(), 20000)
 
   try {
     const res = await fetch(`${ANAC_SEARCH_URL}?${params}`, {

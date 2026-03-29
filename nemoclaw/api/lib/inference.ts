@@ -5,8 +5,8 @@ const LITELLM_API_KEY: string = process.env.LITELLM_API_KEY || ''
 
 const DEFAULT_MODEL = 'nemotron-orchestrator'
 
-const LITELLM_TIMEOUT_MS = Number(process.env.LITELLM_TIMEOUT_MS) || 60_000
-const LITELLM_OCR_TIMEOUT_MS = Number(process.env.LITELLM_OCR_TIMEOUT_MS) || 120_000
+const LITELLM_TIMEOUT_MS = Number(process.env.LITELLM_TIMEOUT_MS) || 180_000
+const LITELLM_OCR_TIMEOUT_MS = Number(process.env.LITELLM_OCR_TIMEOUT_MS) || 300_000
 
 interface ChatCompletionOptions {
   model?: string

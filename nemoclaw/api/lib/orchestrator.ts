@@ -374,7 +374,7 @@ const toolExecutors: Record<string, ToolExecutor> = {
       if (params.cpv) url.searchParams.set('cpv', params.cpv as string)
       if (params.region) url.searchParams.set('region', params.region as string)
 
-      const res = await fetch(url.toString(), { signal: AbortSignal.timeout(10000) })
+      const res = await fetch(url.toString(), { signal: AbortSignal.timeout(30000) })
       if (!res.ok) throw new Error(`ANAC ${res.status}`)
       const data = await res.json() as { records?: unknown[]; totalCount?: number }
 
