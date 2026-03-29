@@ -1,7 +1,6 @@
 services:
-    # OpenShell Gateway — core runtime that manages NemoClaw sandboxes.
+    # OpenShell Gateway — k3s-based sandbox runtime for NemoClaw skills.
     # Sandboxes are created by the gateway (via nemoclaw CLI), not as compose services.
-    # See: https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html
     openshell-gateway:
         image: ghcr.io/nvidia/openshell/cluster:0.0.16
         container_name: openshell-gateway
@@ -33,6 +32,7 @@ services:
             retries: 5
             start_period: 120s
 
+    # NemoClaw REST API — Express server (Node 22, TypeScript)
     terminia-api:
         build:
             context: ./api
@@ -43,13 +43,17 @@ services:
             - "${API_HOST_PORT:-3100}:3100"
         environment:
             - PORT=3100
+            - NODE_ENV=production
+            # Supabase — use internal Docker DNS (kong on dokploy-network)
             - SUPABASE_URL=${SUPABASE_URL}
             - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+            # LiteLLM — internal Docker DNS (llmserver-ai-network)
             - LITELLM_URL=http://litellm-proxy:4000
             - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+            # CORS — allow frontend origins
             - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,https://terminia.pezserv.org}
+            # Telegram bot
             - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-            - NODE_ENV=production
         networks:
             - llmserver-ai-network
             - dokploy-network
