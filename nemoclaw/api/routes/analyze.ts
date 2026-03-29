@@ -50,9 +50,42 @@ function cleanExtractedText(text: string): string {
 
 function extractLabeledValue(text: string, labels: string[]): string | null {
   const escaped = labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  const regex = new RegExp(`(?:${escaped.join('|')})\\s*[:\\-]?\\s*([^\\n]{3,120})`, 'i')
-  const match = text.match(regex)
-  return match?.[1]?.trim() || null
+
+  // Try markdown table format: | **Label** | Value |  or  | Label | Value |
+  const tableRegex = new RegExp(
+    `\\|\\s*\\*{0,2}(?:${escaped.join('|')})\\*{0,2}\\s*\\|\\s*([^|\\n]{2,120})`,
+    'i',
+  )
+  const tableMatch = text.match(tableRegex)
+  if (tableMatch) {
+    return tableMatch[1].replace(/\*+/g, '').replace(/\|.*$/, '').trim() || null
+  }
+
+  // Try colon/dash-separated format: Label: Value  or  Label - Value
+  const colonRegex = new RegExp(
+    `(?:${escaped.join('|')})\\s*[:\\-]\\s*([^\\n]{2,120})`,
+    'i',
+  )
+  const colonMatch = text.match(colonRegex)
+  if (colonMatch) {
+    return colonMatch[1].replace(/\*+/g, '').replace(/\|.*$/, '').trim() || null
+  }
+
+  // Fallback: label followed by anything (no separator required)
+  const fallbackRegex = new RegExp(
+    `(?:${escaped.join('|')})\\s+([^\\n]{2,120})`,
+    'i',
+  )
+  const fallbackMatch = text.match(fallbackRegex)
+  if (fallbackMatch) {
+    const val = fallbackMatch[1].replace(/\*+/g, '').replace(/\|.*$/, '').trim()
+    // Reject if the captured value is itself a label synonym (model confusion)
+    const labelWords = labels.flatMap(l => l.toLowerCase().split(/\s+/))
+    if (labelWords.some(w => w.length > 3 && val.toLowerCase().startsWith(w))) return null
+    return val || null
+  }
+
+  return null
 }
 
 function extractCityFromText(text: string): string | null {
@@ -131,8 +164,12 @@ function extractRegistrationProfileFallback(text: string): RegistrationProfile {
   const fiscalCode = extractFiscalCodeFromText(cleaned) || ''
   const vat = upper.match(VAT_LABEL_REGEX)?.[1] || upper.match(VAT_FALLBACK_REGEX)?.[0] || ''
   const companyName = extractLabeledValue(cleaned, [
-    'Denominazione',
+    'Ragione Sociale',
     'Ragione sociale',
+    'Denominazione',
+    'Ragione sociale e forma giuridica',
+    'Datore di Lavoro',
+    'Committente',
     'Company name',
     'Intestatario',
   ])
@@ -227,10 +264,23 @@ function classificationFromRegistrationProfile(profile: RegistrationProfile): Co
   }
 }
 
-const REGISTRATION_PROMPT = `Estrai dati di registrazione da un documento italiano.
-Rispondi SOLO con JSON:
-{"account_type_hint":"person|company|unknown","document_kind":"identity_or_personal_vat|company_registration|unknown","full_name":null,"company_name":null,"fiscal_code":null,"vat_number":null,"city":null,"sector":null,"confidence":0}
-Regole: niente testo extra; niente campi inventati; city=solo comune/citta; vat_number=11 cifre; fiscal_code=maiuscolo.`
+const REGISTRATION_PROMPT = `Estrai i dati identificativi del SOGGETTO CHE SI REGISTRA (l'utente che carica il documento) da un documento italiano.
+
+Per un contratto di lavoro subordinato: estrai i dati del DATORE DI LAVORO (non del lavoratore).
+Per un documento fiscale/visura: estrai i dati dell'intestatario.
+Per qualsiasi altro contratto: estrai i dati dell'azienda o persona committente/cliente.
+
+Rispondi SOLO con JSON valido (nessun testo aggiuntivo):
+{"account_type_hint":"person|company|unknown","document_kind":"identity_or_personal_vat|company_registration|labor_contract|unknown","full_name":null,"company_name":null,"fiscal_code":null,"vat_number":null,"city":null,"sector":null,"confidence":0}
+
+Regole TASSATIVE:
+- company_name: ragione sociale ESATTA come appare nel documento (es. "NEXUS SOLUTIONS S.p.A.") — NON il termine "Ragione Sociale" o simili etichette
+- full_name: nome e cognome della persona fisica (solo per contratti a persona fisica)
+- fiscal_code: codice fiscale 16 caratteri alfanumerici, maiuscolo
+- vat_number: partita IVA 11 cifre numeriche senza spazi
+- city: solo nome della città/comune (es. "Milano")
+- sector: settore merceologico o null
+- confidence: 0.0-1.0 basato sulla chiarezza dei dati estratti`
 
 // ── System prompts ──────────────────────────────────────────────────────────
 
