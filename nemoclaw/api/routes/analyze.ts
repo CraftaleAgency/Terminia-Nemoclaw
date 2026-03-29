@@ -8,8 +8,14 @@ import type {
   CounterpartInfo,
 } from '../types.ts'
 import { Router } from 'express'
+import { createRequire } from 'module'
 import supabase from '../lib/supabase.ts'
 import { chatCompletion, parseInferenceJSON } from '../lib/inference.ts'
+
+const require = createRequire(import.meta.url)
+const { PDFParse } = require('pdf-parse')
+
+const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/tiff'])
 
 const router = Router()
 
@@ -202,33 +208,41 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
 
   let text = document_text || ''
 
-  // If base64 document provided and no text, attempt OCR via numarkdown
+  // If base64 document provided and no text, extract text
   if (!text && document_base64) {
     try {
-      const ocrResult = await chatCompletion({
-        model: 'numarkdown',
-        messages: [
-          {
+      const raw = document_base64.startsWith('data:')
+        ? document_base64.replace(/^data:[^;]+;base64,/, '')
+        : document_base64
+      const buffer = Buffer.from(raw, 'base64')
+      const mime = (content_type || 'application/pdf').toLowerCase()
+
+      if (IMAGE_MIMES.has(mime)) {
+        // Image → vision OCR via numarkdown
+        const dataUrl = `data:${mime};base64,${raw}`
+        const ocrResult = await chatCompletion({
+          model: 'numarkdown',
+          messages: [{
             role: 'user',
             content: [
               { type: 'text', text: 'Estrai tutto il testo da questo documento.' },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: document_base64.startsWith('data:')
-                    ? document_base64
-                    : `data:${content_type || 'application/pdf'};base64,${document_base64}`,
-                },
-              },
+              { type: 'image_url', image_url: { url: dataUrl } },
             ],
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 8192,
-      })
-      text = ocrResult
+          }],
+          temperature: 0.1,
+          max_tokens: 8192,
+        })
+        text = ocrResult
+      } else {
+        // PDF / other docs → extract text directly
+        const uint8 = new Uint8Array(buffer)
+        const parser = new PDFParse(uint8)
+        await parser.load()
+        const result = await parser.getText()
+        text = typeof result === 'string' ? result : (result?.text || '')
+      }
     } catch (err) {
-      return res.status(422).json({ error: `OCR fallito: ${(err as Error).message}` })
+      return res.status(422).json({ error: `Estrazione testo fallita: ${(err as Error).message}` })
     }
   }
 
