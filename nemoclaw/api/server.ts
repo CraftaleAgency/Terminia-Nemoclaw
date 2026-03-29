@@ -7,6 +7,7 @@ import analyzeRouter from './routes/analyze.ts'
 import osintRouter from './routes/osint.ts'
 import chatRouter from './routes/chat.ts'
 import ocrRouter from './routes/ocr.ts'
+import { chatCompletion } from './lib/inference.ts'
 
 const app = express()
 const PORT = process.env.PORT || 3100
@@ -103,6 +104,24 @@ const server = app.listen(PORT, () => {
   console.log(`   CORS: ${allowedOrigins.join(', ')}`)
   console.log(`   LiteLLM: ${process.env.LITELLM_URL || 'http://litellm-proxy:4000'}`)
   console.log(`   Supabase: ${process.env.SUPABASE_URL ? '✓' : '✗ (missing)'}`)
+
+  void (async () => {
+    const registrationModel = process.env.REGISTRATION_MODEL || 'nemotron-nano'
+    try {
+      await chatCompletion({
+        model: registrationModel,
+        messages: [
+          { role: 'system', content: 'Return ONLY {"ok":true}' },
+          { role: 'user', content: 'warmup' },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 32,
+      })
+      console.log(`   Registration model warm: ${registrationModel}`)
+    } catch (err) {
+      console.error(`[warmup] Registration model failed: ${(err as Error).message}`)
+    }
+  })()
 })
 
 // Graceful shutdown

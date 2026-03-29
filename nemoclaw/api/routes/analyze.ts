@@ -19,6 +19,7 @@ const { PDFParse } = require('pdf-parse')
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/tiff'])
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+const REGISTRATION_MODEL = process.env.REGISTRATION_MODEL || 'nemotron-nano'
 
 const router = Router()
 
@@ -52,6 +53,25 @@ function extractLabeledValue(text: string, labels: string[]): string | null {
   const regex = new RegExp(`(?:${escaped.join('|')})\\s*[:\\-]?\\s*([^\\n]{3,120})`, 'i')
   const match = text.match(regex)
   return match?.[1]?.trim() || null
+}
+
+function extractCityFromText(text: string): string | null {
+  const labeled = extractLabeledValue(text, [
+    'Comune di residenza',
+    'Città di residenza',
+    'Residenza',
+    'Residente a',
+    'Comune',
+    'Sede legale',
+    'Sede',
+    'Con sede in',
+  ])
+  if (labeled) {
+    return labeled.split(/[,\n(]/)[0]?.trim() || null
+  }
+
+  const match = text.match(/\b(?:residente|residenza|con sede|sede legale|domiciliato)\s+(?:a|in)\s+([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,60})/i)
+  return match?.[1]?.split(/[,\n(]/)[0]?.trim() || null
 }
 
 function inferSectorFromText(text: string): string | null {
@@ -101,15 +121,7 @@ function extractRegistrationProfileFallback(text: string): RegistrationProfile {
     'Intestato a',
     'Nominativo',
   ])
-  const city = extractLabeledValue(cleaned, [
-    'Comune di residenza',
-    'Città di residenza',
-    'Residenza',
-    'Residente a',
-    'Comune',
-    'Sede legale',
-    'Sede',
-  ])
+  const city = extractCityFromText(cleaned)
   const sector = inferSectorFromText(cleaned)
 
   const isPerson = Boolean(fiscalCode) && !companyName
@@ -460,6 +472,7 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
 
     try {
       const raw = await chatCompletion({
+        model: REGISTRATION_MODEL,
         messages: [
           { role: 'system', content: REGISTRATION_PROMPT },
           { role: 'user', content: truncated },
