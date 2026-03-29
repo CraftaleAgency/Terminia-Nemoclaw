@@ -80,7 +80,7 @@ async function fetchPage(
       'accept': 'application/json',
     },
     body: JSON.stringify({
-      query: `countryCode:IT AND publicationDate:[${fromDate} TO ${toDate}]`,
+      query: `CY=ITA AND PD>=${fromDate} AND PD<=${toDate}`,
       fields: [...TED_FIELDS],
       page: pageNum,
       limit: PAGE_SIZE,

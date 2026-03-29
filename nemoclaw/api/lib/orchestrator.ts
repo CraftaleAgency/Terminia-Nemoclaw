@@ -375,11 +375,10 @@ const toolExecutors: Record<string, ToolExecutor> = {
 
     // 1. Search TED Europa (primary — more reliable)
     try {
-      const tedQuery = query
-        ? `FT=[${query}]`
-        : 'TD=3'
+      const parts = ['CY=ITA']
+      if (query) parts.push(`FT=[${query}]`)
       const tedBody: Record<string, unknown> = {
-        query: tedQuery,
+        query: parts.join(' AND '),
         limit: 10,
         page: 1,
         fields: ['ND', 'TI', 'AC', 'PC', 'DT', 'CY', 'MA', 'AU'],
@@ -387,8 +386,9 @@ const toolExecutors: Record<string, ToolExecutor> = {
       const tedRes = await fetch('https://api.ted.europa.eu/v3/notices/search', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer dcabd92b303f415fa4fd23ae877a90a1',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Accept': 'application/json',
+          'x-api-key': 'dcabd92b303f415fa4fd23ae877a90a1',
         },
         body: JSON.stringify(tedBody),
         signal: AbortSignal.timeout(15000),
