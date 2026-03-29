@@ -68,7 +68,7 @@ services:
             KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
             # https://github.com/supabase/cli/issues/14
             KONG_DNS_ORDER: LAST,A,CNAME
-            KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+            KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,post-function,request-termination,ip-restriction
             KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
             KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
             SUPABASE_ANON_KEY: ${ANON_KEY}
@@ -81,6 +81,7 @@ services:
         networks:
             - default
             - dokploy-network
+            - llmserver-ai-network
 
     auth:
         container_name: ${CONTAINER_PREFIX}-auth
@@ -510,4 +511,6 @@ networks:
     default:
         name: ${CONTAINER_PREFIX}
     dokploy-network:
+        external: true
+    llmserver-ai-network:
         external: true
