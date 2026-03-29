@@ -17,6 +17,12 @@ import { chatCompletion, parseInferenceJSON } from '../lib/inference.ts'
 const require = createRequire(import.meta.url)
 const { PDFParse } = require('pdf-parse')
 
+// Resolve bundled standard fonts path to silence the pdfjs warning
+const STANDARD_FONT_DATA_URL = new URL(
+  '../../node_modules/pdfjs-dist/standard_fonts/',
+  import.meta.url,
+).href
+
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/tiff'])
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const REGISTRATION_MODEL = process.env.REGISTRATION_MODEL || 'nemotron-orchestrator'
@@ -536,7 +542,7 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
       } else {
         // PDF / other docs → extract text directly
         const uint8 = new Uint8Array(buffer)
-        const parser = new PDFParse(uint8)
+        const parser = new PDFParse({ data: uint8, standardFontDataUrl: STANDARD_FONT_DATA_URL })
         await parser.load()
         const result = await parser.getText()
         text = typeof result === 'string' ? result : (result?.text || '')
