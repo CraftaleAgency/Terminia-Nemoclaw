@@ -90,10 +90,27 @@ app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: 
 })
 
 // ── Start ───────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🐙 Terminia NemoClaw API v${VERSION}`)
   console.log(`   Port: ${PORT}`)
   console.log(`   CORS: ${allowedOrigins.join(', ')}`)
   console.log(`   LiteLLM: ${process.env.LITELLM_URL || 'http://litellm-proxy:4000'}`)
   console.log(`   Supabase: ${process.env.SUPABASE_URL ? '✓' : '✗ (missing)'}`)
 })
+
+// Graceful shutdown
+function shutdown(signal: string) {
+  console.log(`\n[${signal}] Shutting down gracefully...`)
+  server.close(() => {
+    console.log('[shutdown] HTTP server closed')
+    process.exit(0)
+  })
+  // Force exit after 10s if connections won't close
+  setTimeout(() => {
+    console.error('[shutdown] Forced exit after timeout')
+    process.exit(1)
+  }, 10_000).unref()
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))

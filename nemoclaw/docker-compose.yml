@@ -53,12 +53,21 @@ services:
             - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,https://terminia.pezserv.org}
             # Telegram bot
             - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+            # External API keys
+            - TED_API_KEY=${TED_API_KEY:-}
+            - VIES_API_KEY=${VIES_API_KEY:-}
         networks:
             - llmserver-ai-network
             - dokploy-network
         depends_on:
             openshell-gateway:
                 condition: service_started
+        healthcheck:
+            test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/api/health || exit 1"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 30s
 
 networks:
     llmserver-ai-network:

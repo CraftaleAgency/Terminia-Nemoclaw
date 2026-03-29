@@ -5,6 +5,9 @@ const LITELLM_API_KEY: string = process.env.LITELLM_API_KEY || ''
 
 const DEFAULT_MODEL = 'nemotron-orchestrator'
 
+const LITELLM_TIMEOUT_MS = Number(process.env.LITELLM_TIMEOUT_MS) || 60_000
+const LITELLM_OCR_TIMEOUT_MS = Number(process.env.LITELLM_OCR_TIMEOUT_MS) || 120_000
+
 interface ChatCompletionOptions {
   model?: string
   messages: (ChatMessage | { role: string; content: unknown })[]
@@ -34,19 +37,35 @@ export async function chatCompletion({
   const body: Record<string, unknown> = { model, messages, temperature, max_tokens }
   if (response_format) body.response_format = response_format
 
-  const res = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
-    method: 'POST',
-    headers: buildHeaders(),
-    body: JSON.stringify(body),
-  })
+  const controller = new AbortController()
+  const timeoutMs = model?.includes('numarkdown') || model?.includes('ocr')
+    ? LITELLM_OCR_TIMEOUT_MS
+    : LITELLM_TIMEOUT_MS
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 200)}`)
+  try {
+    const res = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 200)}`)
+    }
+
+    const data = await res.json() as { choices: { message: { content: string } }[] }
+    return data.choices[0].message.content
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`LiteLLM request timed out after ${timeoutMs}ms (model: ${model})`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
-
-  const data = await res.json() as { choices: { message: { content: string } }[] }
-  return data.choices[0].message.content
 }
 
 /**
@@ -58,13 +77,30 @@ export async function* chatCompletionStream({
   temperature = 0.4,
   max_tokens = 4096,
 }: ChatCompletionOptions): AsyncGenerator<string> {
-  const res = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
-    method: 'POST',
-    headers: buildHeaders(),
-    body: JSON.stringify({ model, messages, temperature, max_tokens, stream: true }),
-  })
+  const controller = new AbortController()
+  const timeoutMs = model?.includes('numarkdown') || model?.includes('ocr')
+    ? LITELLM_OCR_TIMEOUT_MS
+    : LITELLM_OCR_TIMEOUT_MS // streaming uses longer timeout by default
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  let res: globalThis.Response
+  try {
+    res = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify({ model, messages, temperature, max_tokens, stream: true }),
+      signal: controller.signal,
+    })
+  } catch (err) {
+    clearTimeout(timer)
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`LiteLLM request timed out after ${timeoutMs}ms (model: ${model})`)
+    }
+    throw err
+  }
 
   if (!res.ok) {
+    clearTimeout(timer)
     const text = await res.text().catch(() => '')
     throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 200)}`)
   }
@@ -73,27 +109,36 @@ export async function* chatCompletionStream({
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
 
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
 
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || !trimmed.startsWith('data: ')) continue
-      const payload = trimmed.slice(6)
-      if (payload === '[DONE]') return
-      try {
-        const parsed = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] }
-        const delta = parsed.choices?.[0]?.delta?.content
-        if (delta) yield delta
-      } catch {
-        // skip malformed SSE chunks
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || !trimmed.startsWith('data: ')) continue
+        const payload = trimmed.slice(6)
+        if (payload === '[DONE]') return
+        try {
+          const parsed = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] }
+          const delta = parsed.choices?.[0]?.delta?.content
+          if (delta) yield delta
+        } catch {
+          // skip malformed SSE chunks
+        }
       }
     }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`LiteLLM stream timed out after ${timeoutMs}ms (model: ${model})`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
 }
 
