@@ -6,7 +6,6 @@ services:
         container_name: openshell-gateway
         restart: unless-stopped
         privileged: true
-        cgroupns: host
         pid: host
         entrypoint: ["/entrypoint-wrapper.sh"]
         command: ["server"]
