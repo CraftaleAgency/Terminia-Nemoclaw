@@ -501,19 +501,26 @@ const toolExecutors: Record<string, ToolExecutor> = {
 interface OrchestratorResult {
   toolResults: ToolResult[]
   contextBlock: string
+  reasoning?: string
+  toolNames: string[]
 }
 
 /**
  * Classify user intent via LLM and execute tools.
  * Returns tool results + formatted context for the response LLM pass.
+ * @param onThinking Optional callback called at each reasoning step (for real-time SSE)
  */
 export async function orchestrate(
   userMessage: string,
   companyId: string,
   conversationContext?: string,
+  onThinking?: (step: string) => void,
 ): Promise<OrchestratorResult> {
   // ── Step 1: Intent classification ───────────────────────────────────────
   let toolCalls: ToolCall[] = []
+  let reasoning = ''
+
+  onThinking?.('Classifico l\'intento della richiesta...')
 
   try {
     const promptWithContext = INTENT_PROMPT.replace(
@@ -538,8 +545,14 @@ export async function orchestrate(
     if (cleaned.startsWith('```')) {
       cleaned = cleaned.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')
     }
-    const parsed = JSON.parse(cleaned) as { tools?: ToolCall[] }
+    const parsed = JSON.parse(cleaned) as { tools?: ToolCall[]; reasoning?: string }
     toolCalls = parsed.tools || []
+    reasoning = parsed.reasoning || ''
+
+    const toolNames = toolCalls.filter(t => t.name !== 'none').map(t => t.name)
+    if (toolNames.length > 0) {
+      onThinking?.(`Recupero dati: ${toolNames.join(', ')}`)
+    }
   } catch {
     // If classification fails, fall back to no tools
     toolCalls = [{ name: 'none', params: {} }]
@@ -557,6 +570,8 @@ export async function orchestrate(
 
   for (const call of toolCalls) {
     if (call.name === 'none') continue
+
+    onThinking?.(`Accedo a: ${call.name.replace(/_/g, ' ')}`)
 
     // Inject attachment data into analyze_document params
     if (call.name === 'analyze_document' && attachmentBase64) {
@@ -616,5 +631,6 @@ export async function orchestrate(
     contextBlock = `\n\n--- DATI DALLA PIATTAFORMA (risultati reali delle query eseguite) ---\n${sections.join('\n\n')}\n--- FINE DATI ---\n\nDIRETTIVA: Basa la tua risposta ESCLUSIVAMENTE sui dati sopra riportati. Cita valori, nomi, date e importi esattamente come appaiono. Non aggiungere dati non presenti. Se un risultato e vuoto, dichiaralo esplicitamente. Se un'azione e stata eseguita, confermala con i dettagli dell'operazione.${emptyWarning}`
   }
 
-  return { toolResults: results, contextBlock }
+  const toolNames = toolCalls.filter(t => t.name !== 'none').map(t => t.name)
+  return { toolResults: results, contextBlock, reasoning, toolNames }
 }

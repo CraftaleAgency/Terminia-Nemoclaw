@@ -96,30 +96,24 @@ router.post('/', async (req: Request<object, ChatResponse, ChatRequest>, res: Re
     .map(m => `${m.role === 'user' ? 'Utente' : 'Assistente'}: ${m.content.slice(0, 200)}`)
     .join('\n')
 
-  // ── Orchestrator: classify intent + execute tools ─────────────────────────
-  let contextBlock = ''
-  try {
-    if (company_id) {
-      const orchestratorMessage = attachment?.base64
-        ? `${lastUserMessage}\n\n__ATTACHMENT_BASE64__:${attachment.base64}\n__ATTACHMENT_CONTENT_TYPE__:${attachment.content_type}`
-        : lastUserMessage
-      const result = await orchestrate(orchestratorMessage, company_id, conversationContext)
-      contextBlock = result.contextBlock
-    }
-  } catch {
-    // Non-fatal — proceed without tool data
-  }
-
-  const fullMessages = [
-    { role: 'system' as const, content: SYSTEM_PROMPT + contextBlock },
-    ...messages,
-  ]
-
   // Non-streaming JSON response
   if (stream === false) {
+    let contextBlock = ''
+    try {
+      if (company_id) {
+        const orchestratorMessage = attachment?.base64
+          ? `${lastUserMessage}\n\n__ATTACHMENT_BASE64__:${attachment.base64}\n__ATTACHMENT_CONTENT_TYPE__:${attachment.content_type}`
+          : lastUserMessage
+        const result = await orchestrate(orchestratorMessage, company_id, conversationContext)
+        contextBlock = result.contextBlock
+      }
+    } catch { /* Non-fatal */ }
+    const fullMessages = [
+      { role: 'system' as const, content: SYSTEM_PROMPT + contextBlock },
+      ...messages,
+    ]
     try {
       const content = await chatCompletion({ messages: fullMessages })
-      // Persist assistant response
       if (conversation_id && userId) {
         await supabase.from('chat_messages').insert({
           conversation_id, role: 'assistant', content,
@@ -132,12 +126,36 @@ router.post('/', async (req: Request<object, ChatResponse, ChatRequest>, res: Re
     }
   }
 
-  // SSE streaming response (default)
+  // ── SSE streaming response (default) ─────────────────────────────────────
+  // Start SSE immediately so the browser sees the stream open while we work
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
   res.setHeader('X-Accel-Buffering', 'no')
   res.flushHeaders()
+
+  const emitThinking = (step: string) => {
+    try { res.write(`data: ${JSON.stringify({ type: 'thinking', content: step })}\n\n`) } catch { /* ignore */ }
+  }
+
+  // ── Orchestrator: classify intent + execute tools ─────────────────────────
+  let contextBlock = ''
+  try {
+    if (company_id) {
+      const orchestratorMessage = attachment?.base64
+        ? `${lastUserMessage}\n\n__ATTACHMENT_BASE64__:${attachment.base64}\n__ATTACHMENT_CONTENT_TYPE__:${attachment.content_type}`
+        : lastUserMessage
+      const result = await orchestrate(orchestratorMessage, company_id, conversationContext, emitThinking)
+      contextBlock = result.contextBlock
+    }
+  } catch {
+    // Non-fatal — proceed without tool data
+  }
+
+  const fullMessages = [
+    { role: 'system' as const, content: SYSTEM_PROMPT + contextBlock },
+    ...messages,
+  ]
 
   let fullContent = ''
   try {
