@@ -7,3 +7,4 @@ nemoclaw/.env
 .DS_Store
 Thumbs.db
 node_modules/
+files/volumes/db/data
