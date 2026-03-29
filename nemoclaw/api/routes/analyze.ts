@@ -205,29 +205,10 @@ function classificationFromRegistrationProfile(profile: RegistrationProfile): Co
   }
 }
 
-const REGISTRATION_PROMPT = `Sei un assistente esperto nell'estrazione di dati anagrafici e societari da documenti italiani usati in fase di registrazione.
-
-Analizza il testo del documento e restituisci SOLO un JSON valido con questi campi:
-{
-  "account_type_hint": "person|company|unknown",
-  "document_kind": "identity_or_personal_vat|company_registration|unknown",
-  "full_name": "nome completo persona oppure null",
-  "company_name": "ragione sociale oppure null",
-  "fiscal_code": "codice fiscale se presente oppure null",
-  "vat_number": "partita IVA solo cifre se presente oppure null",
-  "city": "città/comune di residenza o sede legale oppure null",
-  "sector": "uno tra Informatica e Tecnologia, Manifatturiero, Servizi Professionali, Commercio, Edilizia e Costruzioni, Trasporti e Logistica, Alimentare, Sanitario, Altro, oppure null",
-  "confidence": 0.0
-}
-
-Regole:
-- Non inventare dati.
-- Se un dato non è presente chiaramente, usa null.
-- Per "city" restituisci solo il nome della città/comune, senza CAP, provincia o indirizzo.
-- Per "vat_number" usa solo 11 cifre.
-- Per "fiscal_code" usa il formato standard italiano in maiuscolo.
-- Se il documento è di persona fisica, privilegia full_name, fiscal_code, city, vat_number.
-- Se il documento è aziendale, privilegia company_name, vat_number, city, sector.`
+const REGISTRATION_PROMPT = `Estrai dati di registrazione da un documento italiano.
+Rispondi SOLO con JSON:
+{"account_type_hint":"person|company|unknown","document_kind":"identity_or_personal_vat|company_registration|unknown","full_name":null,"company_name":null,"fiscal_code":null,"vat_number":null,"city":null,"sector":null,"confidence":0}
+Regole: niente testo extra; niente campi inventati; city=solo comune/citta; vat_number=11 cifre; fiscal_code=maiuscolo.`
 
 // ── System prompts ──────────────────────────────────────────────────────────
 
@@ -467,6 +448,7 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
   const errors: string[] = []
 
   if (skip_persist) {
+    const registrationText = truncated.slice(0, 4000)
     const fallbackProfile = extractRegistrationProfileFallback(truncated)
     let registrationProfile = fallbackProfile
 
@@ -475,10 +457,11 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
         model: REGISTRATION_MODEL,
         messages: [
           { role: 'system', content: REGISTRATION_PROMPT },
-          { role: 'user', content: truncated },
+          { role: 'user', content: registrationText },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 700,
+        temperature: 0,
+        max_tokens: 180,
       })
       registrationProfile = mergeRegistrationProfile(
         fallbackProfile,
