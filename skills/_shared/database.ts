@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.4"
+  }
   graphql_public: {
     Tables: {
       [_ in never]: never
@@ -2040,6 +2045,53 @@ export type Database = {
           },
         ]
       }
+      user_documents: {
+        Row: {
+          company_id: string | null
+          content_type: string | null
+          created_at: string | null
+          filename: string
+          id: string
+          metadata: Json | null
+          size_bytes: number | null
+          source: string | null
+          storage_path: string
+          user_id: string
+        }
+        Insert: {
+          company_id?: string | null
+          content_type?: string | null
+          created_at?: string | null
+          filename: string
+          id?: string
+          metadata?: Json | null
+          size_bytes?: number | null
+          source?: string | null
+          storage_path: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string | null
+          content_type?: string | null
+          created_at?: string | null
+          filename?: string
+          id?: string
+          metadata?: Json | null
+          size_bytes?: number | null
+          source?: string | null
+          storage_path?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_documents_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       users: {
         Row: {
           avatar_url: string | null
@@ -2333,5 +2385,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-
-
