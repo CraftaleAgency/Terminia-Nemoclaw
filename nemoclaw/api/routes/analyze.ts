@@ -9,6 +9,7 @@ import type {
 } from '../types.ts'
 import { Router } from 'express'
 import { createRequire } from 'module'
+import mammoth from 'mammoth'
 import supabase from '../lib/supabase.ts'
 import { chatCompletion, parseInferenceJSON } from '../lib/inference.ts'
 
@@ -16,6 +17,7 @@ const require = createRequire(import.meta.url)
 const { PDFParse } = require('pdf-parse')
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/tiff'])
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 const router = Router()
 
@@ -233,6 +235,10 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
           max_tokens: 8192,
         })
         text = ocrResult
+      } else if (mime === DOCX_MIME) {
+        // DOCX → extract text via mammoth
+        const result = await mammoth.extractRawText({ buffer })
+        text = result.value?.trim() || ''
       } else {
         // PDF / other docs → extract text directly
         const uint8 = new Uint8Array(buffer)
