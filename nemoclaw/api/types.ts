@@ -69,6 +69,7 @@ export interface AnalyzeContractResponse {
   risk: ContractRisk
   counterpart_id?: string | null
   warnings?: string[]
+  source_text?: string
 }
 
 export interface VerifyOSINTResponse {

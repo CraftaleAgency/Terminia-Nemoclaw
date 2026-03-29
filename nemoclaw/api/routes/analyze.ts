@@ -22,6 +22,72 @@ const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingm
 const router = Router()
 
 const MAX_TEXT_LENGTH = 12000
+const FISCAL_CODE_REGEX = /\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/i
+const VAT_LABEL_REGEX = /(?:PARTITA\s*IVA|P\.?\s*IVA|PIVA|VAT)\D{0,12}(\d{11})/i
+const VAT_FALLBACK_REGEX = /\b\d{11}\b/
+
+function cleanExtractedText(text: string): string {
+  return text
+    .replace(/\u0000/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function extractLabeledValue(text: string, labels: string[]): string | null {
+  const escaped = labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const regex = new RegExp(`(?:${escaped.join('|')})\\s*[:\\-]?\\s*([^\\n]{3,120})`, 'i')
+  const match = text.match(regex)
+  return match?.[1]?.trim() || null
+}
+
+function extractRegistrationClassification(text: string): ContractClassification {
+  const cleaned = cleanExtractedText(text)
+  const upper = cleaned.toUpperCase()
+  const fiscalCode = upper.match(FISCAL_CODE_REGEX)?.[0] || ''
+  const vat = upper.match(VAT_LABEL_REGEX)?.[1] || upper.match(VAT_FALLBACK_REGEX)?.[0] || ''
+  const companyName = extractLabeledValue(cleaned, [
+    'Denominazione',
+    'Ragione sociale',
+    'Company name',
+    'Intestatario',
+  ])
+  const counterpartName = extractLabeledValue(cleaned, [
+    'Cognome e nome',
+    'Nome e cognome',
+    'Titolare',
+    'Intestato a',
+    'Nominativo',
+  ])
+
+  const isPerson = Boolean(fiscalCode) && !companyName
+  const summaryBits = [
+    fiscalCode ? `CF: ${fiscalCode}` : null,
+    vat ? `P.IVA: ${vat}` : null,
+    companyName ? `Azienda: ${companyName}` : null,
+    counterpartName ? `Persona: ${counterpartName}` : null,
+  ].filter(Boolean)
+
+  return {
+    contract_type: isPerson ? 'profilo_persona_fisica' : 'profilo_registrazione',
+    counterpart_type: isPerson ? 'persona_fisica' : 'azienda',
+    language: 'it',
+    confidence: summaryBits.length ? 0.95 : 0.2,
+    parties: {
+      company: companyName || undefined,
+      counterpart: {
+        name: counterpartName || companyName || undefined,
+        vat: vat || undefined,
+        cf: fiscalCode || undefined,
+        role: isPerson ? 'persona' : 'azienda',
+      },
+    },
+    summary_it: summaryBits.length
+      ? `Dati estratti dal documento di registrazione: ${summaryBits.join(', ')}.`
+      : 'Documento acquisito ma senza identificativi chiari estraibili in automatico.',
+  }
+}
 
 // ── System prompts ──────────────────────────────────────────────────────────
 
@@ -256,8 +322,26 @@ router.post('/', async (req: Request<object, AnalyzeContractResponse, AnalyzeCon
     return res.status(400).json({ error: 'document_text o document_base64 è obbligatorio' })
   }
 
+  text = cleanExtractedText(text)
   const truncated = text.slice(0, MAX_TEXT_LENGTH)
   const errors: string[] = []
+
+  if (skip_persist) {
+    const classification = extractRegistrationClassification(truncated)
+    if (!classification.parties?.company && !classification.parties?.counterpart?.vat && !classification.parties?.counterpart?.cf) {
+      errors.push('Nessun identificativo chiaro trovato nel documento di registrazione')
+    }
+
+    const result: AnalyzeContractResponse = {
+      classification,
+      extraction: { dates: null, value: null, renewal: null, clauses: [], obligations: [], milestones: [] },
+      risk: { risk_score: null, risk_label: null, dimensions: null, top_risks: [], recommendations_it: [] },
+      counterpart_id: null,
+      source_text: truncated,
+    }
+    if (errors.length) result.warnings = errors
+    return res.json(result)
+  }
 
   // ── Step 1: Classify ──────────────────────────────────────────────────────
   let classification: ContractClassification
