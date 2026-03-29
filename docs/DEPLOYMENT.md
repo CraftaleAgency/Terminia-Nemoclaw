@@ -56,6 +56,8 @@ All services deploy via **git push → Dokploy auto-deploy**. No docker-compose 
 | `LITELLM_API_KEY` | *(empty or key)* | If LiteLLM requires auth |
 | `CORS_ORIGINS` | `http://localhost:3000,https://terminia.pezserv.org` | Allowed origins |
 | `TELEGRAM_BOT_TOKEN` | `8657190812:AAGpgia...` | Telegram bot API key |
+| `TED_API_KEY` | `dcabd92b303f415fa4fd23ae877a90a1` | TED Europa v3 API key (free plan) |
+| `VIES_API_KEY` | `vac_ZCmwEji1...` | VatCheckAPI fallback (14 credits — non-IT VATs only) |
 
 ### Internal connectivity
 - `terminia-api` → `litellm-proxy:4000` via `llmserver-ai-network`

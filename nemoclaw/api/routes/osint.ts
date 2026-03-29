@@ -15,6 +15,7 @@ import supabase from '../lib/supabase.ts'
 const router = Router()
 
 const VIES_API = 'https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number'
+const VIES_API_KEY = process.env.VIES_API_KEY || ''
 const ANAC_SEARCH_URL = 'https://casellario.anticorruzione.it/CasellarioSearch/Search'
 const ANAC_BASE_URL = 'https://casellario.anticorruzione.it'
 const API_TIMEOUT_MS = 5000
@@ -117,6 +118,25 @@ function parseVat(raw: string): { countryCode: string; vatNumber: string } {
   return { countryCode: 'IT', vatNumber: cleaned }
 }
 
+async function checkViesFallback(vatNumber: string): Promise<Record<string, unknown> | null> {
+  if (!VIES_API_KEY) return null
+  try {
+    const res = await fetch('https://api.vatcheckapi.com/v2/check', {
+      method: 'POST',
+      headers: {
+        'apikey': VIES_API_KEY,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ vat_number: vatNumber }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return null
+    return await res.json() as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
 async function checkVies(vatRaw: string): Promise<VIESResult> {
   const { countryCode, vatNumber } = parseVat(vatRaw)
 
@@ -146,6 +166,22 @@ async function checkVies(vatRaw: string): Promise<VIESResult> {
       error: null,
     }
   } catch (err) {
+    // Fallback to VatCheckAPI for non-Italian VATs when EU VIES fails
+    if (countryCode !== 'IT') {
+      const fallback = await checkViesFallback(`${countryCode}${vatNumber}`)
+      if (fallback) {
+        return {
+          valid: (fallback.valid as boolean) ?? null,
+          country_code: (fallback.country_code as string) ?? countryCode,
+          vat_number: (fallback.vat_number as string) ?? vatNumber,
+          name: (fallback.company_name as string) ?? null,
+          address: (fallback.company_address as string) ?? null,
+          request_date: new Date().toISOString(),
+          error: null,
+        }
+      }
+    }
+
     return {
       valid: null,
       country_code: countryCode,

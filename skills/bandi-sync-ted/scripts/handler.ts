@@ -3,10 +3,14 @@ import { supabase } from '../../_shared/supabase-client.ts'
 import { isoNow } from '../../_shared/utils.ts'
 
 const TED_SEARCH_URL = 'https://api.ted.europa.eu/v3/notices/search';
+const TED_API_KEY = process.env.TED_API_KEY || 'dcabd92b303f415fa4fd23ae877a90a1';
 const API_TIMEOUT_MS = 15000;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
 const INSERT_BATCH_SIZE = 50;
+
+// TED v3 field codes requested in every search
+const TED_FIELDS = ['ND', 'TI', 'AC', 'PC', 'DT', 'CY', 'MA', 'AU'] as const;
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -14,31 +18,19 @@ const INSERT_BATCH_SIZE = 50;
 
 interface HandlerInput {
   days_back?: number
-}
-
-interface TedEstimatedValue {
-  amount?: string | number
-  currency?: string
-}
-
-interface TedAuthority {
-  name?: string
+  cpv?: string
+  country?: string
 }
 
 interface TedNotice {
-  'notice-id'?: string
-  noticeId?: string
-  id?: string
-  title?: string | Record<string, unknown>
-  'title-text'?: string
-  description?: string | Record<string, unknown>
-  'contracting-authority'?: TedAuthority | string
-  'estimated-value'?: TedEstimatedValue
-  'cpv-codes'?: string[]
-  'procedure-type'?: string
-  'publication-date'?: string
-  'submission-deadline'?: string
-  'nuts-code'?: string
+  ND?: string
+  TI?: string | Record<string, string>
+  AC?: string | Record<string, string>
+  PC?: string | string[]
+  DT?: string
+  CY?: string
+  MA?: string | number
+  AU?: string
   [key: string]: unknown
 }
 
@@ -46,6 +38,7 @@ interface TedApiResponse {
   notices?: TedNotice[]
   results?: TedNotice[]
   items?: TedNotice[]
+  totalNoticeCount?: number
   totalPages?: number
   hasMore?: boolean
   [key: string]: unknown
@@ -54,19 +47,20 @@ interface TedApiResponse {
 interface BandoRow {
   title: string
   description: string
-  contracting_authority: string
+  authority_name: string
   base_value: number | null
   currency: string
   cpv_codes: string[]
-  procedure_type: string
+  procedure_type: string | null
   publication_date: string | null
   deadline: string | null
-  nuts_code: string
+  nuts_code: string | null
   source: string
   source_url: string
   source_id: string
   raw_data: TedNotice
   is_active: boolean
+  scraped_at: string
 }
 
 interface HandlerResult {
@@ -77,34 +71,35 @@ interface HandlerResult {
   error?: string
 }
 
-/**
- * Build a TED API search URL for Italian notices published since a given date.
- */
-function buildSearchUrl(sinceDate: string, page: number): string {
-  const params = new URLSearchParams({
-    q: `country=IT AND publication-date>=${sinceDate}`,
-    fields: [
-      'notice-id', 'title', 'description', 'contracting-authority',
-      'estimated-value', 'cpv-codes', 'submission-deadline', 'nuts-code',
-      'procedure-type', 'publication-date', 'document-url',
-    ].join(','),
-    pageSize: String(PAGE_SIZE),
-    page: String(page),
-    sortField: 'publication-date',
-    sortOrder: 'desc',
-  });
-  return `${TED_SEARCH_URL}?${params}`;
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+
+function formatDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
 }
 
-/**
- * Fetch a single page from the TED API. Returns the parsed JSON body.
- * Handles both v3 and possible v2-style response shapes defensively.
- */
-async function fetchPage(sinceDate: string, page: number): Promise<TedApiResponse> {
-  const url = buildSearchUrl(sinceDate, page);
-
-  const response = await fetch(url, {
-    headers: { Accept: 'application/json' },
+async function fetchPage(
+  fromDate: string,
+  toDate: string,
+  pageNum: number,
+): Promise<TedApiResponse> {
+  const response = await fetch(TED_SEARCH_URL, {
+    method: 'POST',
+    headers: {
+      'x-api-key': TED_API_KEY,
+      'content-type': 'application/json; charset=utf-8',
+      'accept': 'application/json',
+    },
+    body: JSON.stringify({
+      query: `countryCode:IT AND publicationDate:[${fromDate} TO ${toDate}]`,
+      fields: [...TED_FIELDS],
+      page: pageNum,
+      limit: PAGE_SIZE,
+    }),
     signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
 
@@ -115,42 +110,59 @@ async function fetchPage(sinceDate: string, page: number): Promise<TedApiRespons
   return response.json() as Promise<TedApiResponse>;
 }
 
-/**
- * Normalize a raw TED notice into a row compatible with the bandi table.
- */
+// ---------------------------------------------------------------------------
+// Mapping
+// ---------------------------------------------------------------------------
+
+function textOf(val: unknown): string {
+  if (typeof val === 'string') return val;
+  if (val && typeof val === 'object') {
+    const obj = val as Record<string, string>;
+    return obj.EN || obj.IT || Object.values(obj)[0] || '';
+  }
+  return '';
+}
+
 function mapNotice(notice: TedNotice): BandoRow | null {
-  const noticeId = notice['notice-id'] ?? notice.noticeId ?? notice.id;
+  const noticeId = notice.ND;
   if (!noticeId) return null;
 
-  const title = notice.title ?? notice['title-text'] ?? '';
-  const description = notice.description ?? '';
-  const authority = notice['contracting-authority'];
-  const estimatedValue = notice['estimated-value'];
-  const cpvCodes = notice['cpv-codes'];
+  const title = textOf(notice.TI);
+  const authority = textOf(notice.AU) || textOf(notice.AC);
+  const cpvRaw = notice.PC;
+  const cpvCodes = Array.isArray(cpvRaw)
+    ? cpvRaw.filter(Boolean)
+    : (typeof cpvRaw === 'string' ? cpvRaw.split(/[,;|]/).map(s => s.trim()).filter(Boolean) : []);
+
+  const amountRaw = notice.MA;
+  const baseValue = typeof amountRaw === 'number'
+    ? amountRaw
+    : (typeof amountRaw === 'string' ? (parseFloat(amountRaw) || null) : null);
 
   return {
-    title: typeof title === 'string' ? title : JSON.stringify(title),
-    description: typeof description === 'string' ? description : JSON.stringify(description),
-    contracting_authority: (authority as TedAuthority)?.name ?? (typeof authority === 'string' ? authority : ''),
-    base_value: parseFloat(String(estimatedValue?.amount)) || null,
-    currency: estimatedValue?.currency || 'EUR',
-    cpv_codes: Array.isArray(cpvCodes) ? cpvCodes : [],
-    procedure_type: notice['procedure-type'] ?? '',
-    publication_date: notice['publication-date'] ?? null,
-    deadline: notice['submission-deadline'] ?? null,
-    nuts_code: notice['nuts-code'] ?? '',
+    title: title || 'N/D',
+    description: '',
+    authority_name: authority || 'N/D',
+    base_value: baseValue,
+    currency: 'EUR',
+    cpv_codes: cpvCodes,
+    procedure_type: null,
+    publication_date: notice.DT ?? null,
+    deadline: null,
+    nuts_code: null,
     source: 'ted',
     source_url: `https://ted.europa.eu/en/notice/-/${noticeId}`,
     source_id: String(noticeId),
     raw_data: notice,
     is_active: true,
+    scraped_at: new Date().toISOString(),
   };
 }
 
-/**
- * Extract the notices array from a TED API response,
- * handling both v3 and possible v2 shapes.
- */
+// ---------------------------------------------------------------------------
+// Extract notices from response (handle multiple shapes)
+// ---------------------------------------------------------------------------
+
 function extractNotices(body: TedApiResponse): TedNotice[] {
   if (Array.isArray(body?.notices)) return body.notices;
   if (Array.isArray(body?.results)) return body.results;
@@ -159,28 +171,23 @@ function extractNotices(body: TedApiResponse): TedNotice[] {
   return [];
 }
 
-/**
- * Determine whether more pages exist.
- */
-function hasMorePages(body: TedApiResponse, currentPage: number): boolean {
-  // v3 style: total count or explicit flag
+function hasMorePages(body: TedApiResponse, currentPage: number, totalFetched: number): boolean {
   if (body?.totalPages != null) return currentPage < body.totalPages;
+  if (body?.totalNoticeCount != null) return totalFetched < body.totalNoticeCount;
   if (body?.hasMore === true) return true;
-
-  const notices = extractNotices(body);
-  return notices.length >= PAGE_SIZE;
+  return extractNotices(body).length >= PAGE_SIZE;
 }
 
-/**
- * Look up existing source_ids in the bandi table.
- * Returns a Set of already-known TED notice IDs.
- */
+// ---------------------------------------------------------------------------
+// Supabase operations
+// ---------------------------------------------------------------------------
+
 async function fetchExistingIds(sourceIds: string[]): Promise<Set<string>> {
   if (sourceIds.length === 0) return new Set();
 
   const existing = new Set<string>();
   let failedChunks = 0;
-  // Query in chunks to stay within URL/body limits
+
   for (let i = 0; i < sourceIds.length; i += 500) {
     const chunk = sourceIds.slice(i, i + 500);
     const { data, error } = await supabase
@@ -202,71 +209,75 @@ async function fetchExistingIds(sourceIds: string[]): Promise<Set<string>> {
   return existing;
 }
 
-/**
- * Insert rows into the bandi table in batches.
- * Returns the count of successfully inserted rows.
- */
 async function batchInsert(rows: BandoRow[]): Promise<number> {
   let inserted = 0;
-
   for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
     const batch = rows.slice(i, i + INSERT_BATCH_SIZE);
     const { error } = await supabase.from('bandi').insert(batch);
-    if (error) throw new Error(`Supabase insert failed: ${error.message}`);
-    inserted += batch.length;
+    if (!error) {
+      inserted += batch.length;
+    } else {
+      for (const row of batch) {
+        const { error: singleErr } = await supabase.from('bandi').insert(row);
+        if (!singleErr) inserted += 1;
+      }
+    }
   }
-
   return inserted;
 }
 
-/**
- * Mark notices with an expired deadline as inactive.
- */
 async function markExpired(): Promise<void> {
   const now = isoNow();
-  await supabase
+  const { error } = await supabase
     .from('bandi')
     .update({ is_active: false })
     .eq('source', 'ted')
     .eq('is_active', true)
     .lt('deadline', now)
     .not('deadline', 'is', null);
+
+  if (error) {
+    console.warn('[bandi-sync-ted] Failed to mark expired:', error.message);
+  }
 }
 
-/**
- * Sync Italian EU procurement notices from TED Europa into the bandi table.
- */
+// ---------------------------------------------------------------------------
+// Main handler
+// ---------------------------------------------------------------------------
+
 async function handler(input: HandlerInput): Promise<HandlerResult> {
   const daysBack = input?.days_back || 1;
-  const sinceDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split('T')[0];
+  const now = new Date();
+  const since = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
+  const fromDate = formatDate(since);
+  const toDate = formatDate(now);
 
   let synced = 0;
   let skippedDuplicates = 0;
   let errors = 0;
+  let totalFetched = 0;
 
   try {
-    let page = 1;
-    let hasMore = true;
+    let pageNum = 1;
+    let more = true;
 
-    while (hasMore) {
+    while (more) {
       let body: TedApiResponse;
       try {
-        body = await fetchPage(sinceDate, page);
+        body = await fetchPage(fromDate, toDate, pageNum);
       } catch (err: unknown) {
-        // First page failure means TED is unreachable
-        if (page === 1) {
+        if (pageNum === 1) {
           return { synced: 0, skipped_duplicates: 0, errors: 0, source: 'ted', error: 'ted_unavailable' };
         }
-        // Later page failure → return partial results
+        console.error(`[bandi-sync-ted] Page ${pageNum} failed:`, (err as Error).message);
         break;
       }
 
       const rawNotices = extractNotices(body);
       if (rawNotices.length === 0) break;
+      totalFetched += rawNotices.length;
 
-      // Map raw notices to bandi rows
+      // Map
       const mapped: BandoRow[] = [];
       for (const raw of rawNotices) {
         try {
@@ -278,13 +289,13 @@ async function handler(input: HandlerInput): Promise<HandlerResult> {
         }
       }
 
-      // Deduplicate against existing records
+      // Dedup
       const candidateIds = mapped.map((r) => r.source_id);
       let existingIds: Set<string>;
       try {
         existingIds = await fetchExistingIds(candidateIds);
       } catch (err: unknown) {
-        console.error('fetchExistingIds failed:', err);
+        console.error('[bandi-sync-ted] fetchExistingIds failed:', err);
         errors += mapped.length;
         break;
       }
@@ -298,7 +309,7 @@ async function handler(input: HandlerInput): Promise<HandlerResult> {
         }
       }
 
-      // Insert new records
+      // Insert
       if (toInsert.length > 0) {
         try {
           synced += await batchInsert(toInsert);
@@ -307,17 +318,32 @@ async function handler(input: HandlerInput): Promise<HandlerResult> {
         }
       }
 
-      // Pagination
-      hasMore = hasMorePages(body, page);
-      page++;
-      if (page > MAX_PAGES) break;
+      more = hasMorePages(body, pageNum, totalFetched);
+      pageNum++;
+      if (pageNum > MAX_PAGES) break;
     }
 
     // Mark expired notices
     try {
       await markExpired();
     } catch {
-      // Non-fatal: sync counts are still valid
+      // Non-fatal
+    }
+
+    // Track sync metadata
+    try {
+      await supabase.from('sync_metadata').upsert(
+        {
+          source: 'ted',
+          last_synced_at: isoNow(),
+          records_synced: synced,
+          records_skipped: skippedDuplicates,
+          records_errored: errors,
+        },
+        { onConflict: 'source' },
+      );
+    } catch {
+      // Non-fatal
     }
   } catch {
     return { synced, skipped_duplicates: skippedDuplicates, errors: errors + 1, source: 'ted', error: 'unexpected_error' };

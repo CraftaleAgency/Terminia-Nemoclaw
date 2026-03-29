@@ -2,10 +2,9 @@
 import { supabase } from '../../_shared/supabase-client.ts'
 import { isoNow } from '../../_shared/utils.ts'
 
-const ANAC_CKAN_API = 'https://dati.anticorruzione.it/api/3/action/package_search';
-const ANAC_PACKAGE_SHOW = 'https://dati.anticorruzione.it/api/3/action/package_show';
-const ANAC_DATASET_ID = 'bandi-gara';
+const ANAC_OCDS_RECORDS = 'https://dati.anticorruzione.it/opendata/ocds/api/records';
 const API_TIMEOUT_MS = 15000;
+const PAGE_SIZE = 100;
 const INSERT_CHUNK_SIZE = 50;
 
 // ---------------------------------------------------------------------------
@@ -16,49 +15,88 @@ interface HandlerInput {
   company_id?: string
 }
 
-interface CkanResource {
-  format?: string
-  url?: string
+interface OcdsValue {
+  amount?: number
+  currency?: string
+}
+
+interface OcdsClassification {
+  id?: string
   [key: string]: unknown
 }
 
-interface CkanPackage {
-  resources?: CkanResource[]
+interface OcdsItem {
+  classification?: OcdsClassification
+  deliveryLocation?: { region?: string; [key: string]: unknown }
   [key: string]: unknown
 }
 
-interface CkanResponse {
-  success: boolean
-  result?: CkanPackage & {
-    results?: CkanPackage[]
-  }
-}
-
-interface ResolvedResource {
-  url: string
-  format: string
-}
-
-interface RawRecord {
+interface OcdsTenderPeriod {
+  endDate?: string
   [key: string]: unknown
+}
+
+interface OcdsTender {
+  title?: string
+  description?: string
+  value?: OcdsValue
+  status?: string
+  procurementMethod?: string
+  mainProcurementCategory?: string
+  items?: OcdsItem[]
+  tenderPeriod?: OcdsTenderPeriod
+  [key: string]: unknown
+}
+
+interface OcdsBuyer {
+  name?: string
+  identifier?: { id?: string; [key: string]: unknown }
+  [key: string]: unknown
+}
+
+interface OcdsRelease {
+  tender?: OcdsTender
+  buyer?: OcdsBuyer
+  releaseDate?: string
+  [key: string]: unknown
+}
+
+interface OcdsRecord {
+  ocid: string
+  releaseDate?: string
+  tag?: string
+  tender?: OcdsTender
+  releases?: OcdsRelease[]
+  [key: string]: unknown
+}
+
+interface OcdsApiResponse {
+  records: OcdsRecord[]
+  totalCount: number
+  page: number
+  size: number
 }
 
 interface BandoRow {
-  cig: string
   title: string
   description: string
-  contracting_authority: string
+  authority_name: string
+  authority_code: string | null
+  source: 'anac'
+  source_url: string
+  source_id: string
+  cig: string
   base_value: number | null
+  currency: string
   cpv_codes: string[]
   procedure_type: string | null
   publication_date: string | null
   deadline: string | null
   nuts_code: string | null
-  source: string
-  source_url: string
-  source_id: string
-  raw_data: RawRecord
+  contract_category: string | null
+  raw_data: OcdsRecord
   is_active: boolean
+  scraped_at: string
 }
 
 interface HandlerResult {
@@ -66,6 +104,8 @@ interface HandlerResult {
   skipped_duplicates: number
   errors: number
   source: string
+  pages_fetched: number
+  total_remote: number
   error?: string
   detail?: string
 }
@@ -74,193 +114,56 @@ interface HandlerResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function fetchWithTimeout(url: string, opts: RequestInit = {}, timeoutMs: number = API_TIMEOUT_MS): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...opts, signal: controller.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    return res;
-  } finally {
-    clearTimeout(timer);
-  }
+function monthStart(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
-/**
- * Discover the latest downloadable resource URL for the bandi-gara dataset.
- * Prefers JSON, falls back to CSV.
- */
-async function resolveDatasetUrl(): Promise<ResolvedResource | null> {
-  // Try package_show first (stable dataset id)
-  try {
-    const res = await fetchWithTimeout(
-      `${ANAC_PACKAGE_SHOW}?id=${ANAC_DATASET_ID}`,
-    );
-    const body: CkanResponse = await res.json() as CkanResponse;
-    if (body.success && body.result?.resources?.length) {
-      return pickBestResource(body.result.resources);
-    }
-  } catch { /* fall through to search */ }
-
-  // Fallback: search for the dataset
-  const res = await fetchWithTimeout(
-    `${ANAC_CKAN_API}?q=bandi+gara&rows=5`,
-  );
-  const body: CkanResponse = await res.json() as CkanResponse;
-  if (!body.success || !body.result?.results?.length) {
-    throw new Error('anac_no_dataset');
-  }
-
-  for (const pkg of body.result.results) {
-    if (pkg.resources?.length) {
-      const url = pickBestResource(pkg.resources);
-      if (url) return url;
-    }
-  }
-
-  throw new Error('anac_no_resource');
+function todayIso(): string {
+  return new Date().toISOString().split('T')[0];
 }
 
-function pickBestResource(resources: CkanResource[]): ResolvedResource | null {
-  const json = resources.find(
-    (r) => r.format?.toUpperCase() === 'JSON' || r.url?.endsWith('.json'),
-  );
-  if (json) return { url: json.url!, format: 'json' };
-
-  const csv = resources.find(
-    (r) => r.format?.toUpperCase() === 'CSV' || r.url?.endsWith('.csv'),
-  );
-  if (csv) return { url: csv.url!, format: 'csv' };
-
-  // Accept whatever is available
-  if (resources[0]?.url) {
-    const fmt = resources[0].format?.toLowerCase() || 'unknown';
-    return { url: resources[0].url, format: fmt };
-  }
-
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Parsers
-// ---------------------------------------------------------------------------
-
-interface JsonDataset {
-  results?: RawRecord[]
-  result?: RawRecord[]
-  data?: RawRecord[]
-  records?: RawRecord[]
-  [key: string]: unknown
-}
-
-function parseJsonRecords(raw: RawRecord[] | JsonDataset): RawRecord[] {
-  if (Array.isArray(raw)) return raw;
-  if (raw.results && Array.isArray(raw.results)) return raw.results;
-  if (raw.result && Array.isArray(raw.result)) return raw.result;
-  if (raw.data && Array.isArray(raw.data)) return raw.data;
-  if (raw.records && Array.isArray(raw.records)) return raw.records;
-  throw new Error('anac_unknown_json_structure');
-}
-
-function parseCsvRecords(text: string): RawRecord[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
-
-  const sep = lines[0].includes(';') ? ';' : ',';
-  const headers = lines[0].split(sep).map((h) => h.trim().replace(/^"|"$/g, ''));
-
-  return lines.slice(1).map((line) => {
-    const values = splitCsvLine(line, sep);
-    const record: RawRecord = {};
-    headers.forEach((h, i) => {
-      record[h] = values[i] ?? '';
-    });
-    return record;
+async function fetchPage(from: string, to: string, page: number): Promise<OcdsApiResponse> {
+  const url = `${ANAC_OCDS_RECORDS}?releaseDate_from=${from}&releaseDate_to=${to}&page=${page}&size=${PAGE_SIZE}`;
+  const res = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
-}
-
-function splitCsvLine(line: string, sep: string): string[] {
-  const values: string[] = [];
-  let current = '';
-  let inQuote = false;
-  for (const ch of line) {
-    if (ch === '"') {
-      inQuote = !inQuote;
-    } else if (ch === sep && !inQuote) {
-      values.push(current.trim());
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-  values.push(current.trim());
-  return values;
+  if (!res.ok) throw new Error(`ANAC OCDS HTTP ${res.status} ${res.statusText}`);
+  return res.json() as Promise<OcdsApiResponse>;
 }
 
 // ---------------------------------------------------------------------------
 // Record mapping
 // ---------------------------------------------------------------------------
 
-const CIG_FIELD_NAMES: string[] = ['cig', 'CIG', 'codice_cig', 'codiceCig'];
-const TITLE_FIELD_NAMES: string[] = ['oggetto', 'oggetto_gara', 'oggettoGara', 'descrizione', 'object', 'title'];
-const VALUE_FIELD_NAMES: string[] = ['importo', 'importo_complessivo_gara', 'importoComplessivoGara', 'importo_base', 'importoBase', 'base_value'];
-const CPV_FIELD_NAMES: string[] = ['cpv', 'codice_cpv', 'codiceCpv', 'settore_merceologico'];
-const PROC_FIELD_NAMES: string[] = ['tipo_procedura', 'tipoProcedura', 'modalita_realizzazione', 'procedure_type'];
-const AUTHORITY_FIELD_NAMES: string[] = ['denominazione', 'stazione_appaltante', 'stazioneAppaltante', 'denominazione_stazione_appaltante'];
-const PUB_DATE_FIELDS: string[] = ['data_pubblicazione', 'dataPubblicazione', 'data_inizio', 'publication_date'];
-const DEADLINE_FIELDS: string[] = ['data_scadenza', 'dataScadenza', 'scadenza', 'deadline'];
-const NUTS_FIELDS: string[] = ['codice_nuts', 'codiceNuts', 'luogo_istat', 'nuts_code'];
+function mapRecord(record: OcdsRecord): BandoRow | null {
+  if (!record.ocid) return null;
 
-function pick(record: RawRecord, candidates: string[]): string | null {
-  for (const key of candidates) {
-    if (record[key] != null && String(record[key]).trim() !== '') {
-      return String(record[key]).trim();
-    }
-  }
-  return null;
-}
-
-function parseNumber(val: string | null): number | null {
-  if (val == null) return null;
-  const cleaned = String(val).replace(/[^\d.,-]/g, '').replace(',', '.');
-  const num = parseFloat(cleaned);
-  return Number.isFinite(num) ? num : null;
-}
-
-function parseCpv(val: string | null): string[] {
-  if (!val) return [];
-  return String(val)
-    .split(/[,;|]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function parseDate(val: string | null): string | null {
-  if (!val) return null;
-  const d = new Date(val);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-function mapRecord(raw: RawRecord): BandoRow | null {
-  const cig = pick(raw, CIG_FIELD_NAMES);
-  if (!cig) return null; // CIG is mandatory
+  const release: OcdsRelease = record.releases?.length
+    ? record.releases[record.releases.length - 1]
+    : {};
 
   return {
-    cig,
-    title: pick(raw, TITLE_FIELD_NAMES) || 'N/D',
-    description: pick(raw, TITLE_FIELD_NAMES) || '',
-    contracting_authority: pick(raw, AUTHORITY_FIELD_NAMES) || 'N/D',
-    base_value: parseNumber(pick(raw, VALUE_FIELD_NAMES)),
-    cpv_codes: parseCpv(pick(raw, CPV_FIELD_NAMES)),
-    procedure_type: pick(raw, PROC_FIELD_NAMES) || null,
-    publication_date: parseDate(pick(raw, PUB_DATE_FIELDS)),
-    deadline: parseDate(pick(raw, DEADLINE_FIELDS)),
-    nuts_code: pick(raw, NUTS_FIELDS) || null,
-    source: 'anac',
-    source_url: `https://dati.anticorruzione.it/opendata/dataset/${ANAC_DATASET_ID}`,
-    source_id: cig,
-    raw_data: raw,
+    title: release.tender?.title || record.tender?.title || 'N/D',
+    description: release.tender?.description || '',
+    authority_name: release.buyer?.name || 'N/D',
+    authority_code: release.buyer?.identifier?.id || null,
+    source: 'anac' as const,
+    source_url: `https://dati.anticorruzione.it/opendata/ocds/api/records/${record.ocid}`,
+    source_id: record.ocid,
+    cig: record.ocid.split('-').pop() || record.ocid,
+    base_value: release.tender?.value?.amount ?? null,
+    currency: release.tender?.value?.currency || 'EUR',
+    cpv_codes: release.tender?.items?.map(i => i.classification?.id).filter(Boolean) as string[] || [],
+    procedure_type: release.tender?.procurementMethod || null,
+    publication_date: release.releaseDate || record.releaseDate || null,
+    deadline: release.tender?.tenderPeriod?.endDate || null,
+    nuts_code: release.tender?.items?.[0]?.deliveryLocation?.region || null,
+    contract_category: release.tender?.mainProcurementCategory || null,
+    raw_data: record,
     is_active: true,
+    scraped_at: new Date().toISOString(),
   };
 }
 
@@ -268,22 +171,24 @@ function mapRecord(raw: RawRecord): BandoRow | null {
 // Supabase operations
 // ---------------------------------------------------------------------------
 
-async function fetchExistingCigs(cigs: string[]): Promise<Set<string>> {
+async function fetchExistingSourceIds(ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
   const existing = new Set<string>();
   let failedChunks = 0;
-  // Query in chunks to stay within URL/body limits
-  for (let i = 0; i < cigs.length; i += 500) {
-    const chunk = cigs.slice(i, i + 500);
+
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
     const { data, error } = await supabase
       .from('bandi')
-      .select('cig')
-      .in('cig', chunk);
+      .select('source_id')
+      .eq('source', 'anac')
+      .in('source_id', chunk);
 
     if (error) {
-      console.error(`[bandi-sync-anac] fetchExistingCigs chunk ${i}–${i + chunk.length} failed:`, error.message);
+      console.error(`[bandi-sync-anac] fetchExistingSourceIds chunk ${i}–${i + chunk.length} failed:`, error.message);
       failedChunks++;
     } else if (data) {
-      (data as Array<{ cig: string }>).forEach((row) => existing.add(row.cig));
+      (data as Array<{ source_id: string }>).forEach((row) => existing.add(row.source_id));
     }
   }
   if (failedChunks > 0) {
@@ -327,81 +232,86 @@ async function markExpiredBandi(): Promise<void> {
 // Main handler
 // ---------------------------------------------------------------------------
 
-/**
- * Sync Italian public procurement tenders from ANAC OpenData.
- */
-async function handler(input: HandlerInput = {}): Promise<HandlerResult> {
-  const result: HandlerResult = { synced: 0, skipped_duplicates: 0, errors: 0, source: 'anac' };
+async function handler(_input: HandlerInput = {}): Promise<HandlerResult> {
+  const result: HandlerResult = {
+    synced: 0, skipped_duplicates: 0, errors: 0,
+    source: 'anac', pages_fetched: 0, total_remote: 0,
+  };
 
-  // Step 1 — Resolve dataset URL
-  let resource: ResolvedResource | null;
-  try {
-    resource = await resolveDatasetUrl();
-    if (!resource) throw new Error('anac_no_resource');
-  } catch (err: unknown) {
-    return { ...result, error: 'anac_unavailable', detail: (err as Error).message };
-  }
+  const from = monthStart();
+  const to = todayIso();
+  let page = 0;
+  let totalCount = Infinity;
 
-  // Step 2 — Download dataset
-  let rawRecords: RawRecord[];
-  try {
-    const dataRes = await fetchWithTimeout(resource.url, {}, API_TIMEOUT_MS);
-    if (resource.format === 'json' || resource.url.endsWith('.json')) {
-      const json = await dataRes.json();
-      rawRecords = parseJsonRecords(json as RawRecord[] | JsonDataset);
-    } else {
-      const text = await dataRes.text();
-      rawRecords = parseCsvRecords(text);
-    }
-  } catch (err: unknown) {
-    return { ...result, error: 'anac_unavailable', detail: (err as Error).message };
-  }
-
-  if (!rawRecords.length) {
-    return { ...result, error: 'anac_empty_dataset' };
-  }
-
-  // Step 3 — Map records
-  const mapped: BandoRow[] = [];
-  for (const raw of rawRecords) {
+  while (page * PAGE_SIZE < totalCount) {
+    let body: OcdsApiResponse;
     try {
-      const record = mapRecord(raw);
-      if (record) {
-        mapped.push(record);
-      } else {
-        result.errors += 1;
+      body = await fetchPage(from, to, page);
+      result.pages_fetched++;
+    } catch (err: unknown) {
+      if (page === 0) {
+        return { ...result, error: 'anac_unavailable', detail: (err as Error).message };
       }
+      console.error(`[bandi-sync-anac] Page ${page} failed, stopping pagination:`, (err as Error).message);
+      result.errors++;
+      break;
+    }
+
+    totalCount = body.totalCount ?? 0;
+    result.total_remote = totalCount;
+
+    if (!body.records?.length) break;
+
+    // Map records
+    const mapped: BandoRow[] = [];
+    for (const rec of body.records) {
+      try {
+        const row = mapRecord(rec);
+        if (row) mapped.push(row);
+        else result.errors++;
+      } catch {
+        result.errors++;
+      }
+    }
+
+    if (!mapped.length) { page++; continue; }
+
+    // Dedup against existing source_ids
+    const candidateIds = mapped.map((r) => r.source_id);
+    let existingIds: Set<string>;
+    try {
+      existingIds = await fetchExistingSourceIds(candidateIds);
     } catch {
-      result.errors += 1;
+      result.errors += mapped.length;
+      page++;
+      continue;
     }
-  }
 
-  if (!mapped.length) {
-    return result;
-  }
-
-  // Step 4 — Dedup against existing CIGs
-  const allCigs = mapped.map((r) => r.cig);
-  const existingCigs = await fetchExistingCigs(allCigs);
-
-  const toInsert: BandoRow[] = [];
-  for (const record of mapped) {
-    if (existingCigs.has(record.cig)) {
-      result.skipped_duplicates += 1;
-    } else {
-      toInsert.push(record);
+    const toInsert: BandoRow[] = [];
+    for (const row of mapped) {
+      if (existingIds.has(row.source_id)) {
+        result.skipped_duplicates++;
+      } else {
+        toInsert.push(row);
+      }
     }
+
+    // Batch insert
+    if (toInsert.length) {
+      try {
+        result.synced += await insertBatch(toInsert);
+      } catch {
+        result.errors += toInsert.length;
+      }
+    }
+
+    page++;
   }
 
-  // Step 5 — Batch insert
-  if (toInsert.length) {
-    result.synced = await insertBatch(toInsert);
-  }
-
-  // Step 6 — Mark expired bandi
+  // Mark expired bandi
   await markExpiredBandi();
 
-  // Step 7 — Track sync metadata
+  // Track sync metadata
   try {
     await supabase.from('sync_metadata').upsert(
       {
