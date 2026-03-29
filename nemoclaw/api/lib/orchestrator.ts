@@ -497,10 +497,31 @@ export async function orchestrate(
       const json = JSON.stringify(r.data, null, 2)
       // Truncate very large results
       const truncated = json.length > 4000 ? json.slice(0, 4000) + '\n... (troncato)' : json
-      return `[RISULTATO: ${r.tool}]\n${truncated}`
+      // Flag empty results explicitly
+      const isEmpty = !r.data || (Array.isArray(r.data) && r.data.length === 0) ||
+        (typeof r.data === 'object' && r.data !== null && Object.values(r.data as Record<string, unknown>).every(
+          v => v === null || v === 0 || (Array.isArray(v) && v.length === 0)
+        ))
+      const emptyNote = isEmpty ? ' ⚠️ NESSUN DATO TROVATO — l\'utente non ha ancora dati in questa sezione.' : ''
+      return `[RISULTATO: ${r.tool}]${emptyNote}\n${truncated}`
     })
 
-    contextBlock = `\n\n--- DATI DALLA PIATTAFORMA (risultati reali) ---\n${sections.join('\n\n')}\n--- FINE DATI ---\n\nIstruzioni: Usa QUESTI dati reali per rispondere. Cita nomi, importi, date, punteggi specifici. NON inventare dati aggiuntivi. Se un'azione è stata eseguita (resolve_alert, update_*), conferma all'utente.`
+    const allEmpty = results.every(r => {
+      if (!r.success) return true
+      if (!r.data) return true
+      if (typeof r.data === 'object' && r.data !== null) {
+        return Object.values(r.data as Record<string, unknown>).every(
+          v => v === null || v === 0 || (Array.isArray(v) && v.length === 0)
+        )
+      }
+      return false
+    })
+
+    const emptyWarning = allEmpty
+      ? '\n\n⚠️ ATTENZIONE: TUTTI i risultati sono VUOTI. L\'utente probabilmente ha un account nuovo senza dati. NON inventare dati — suggerisci come iniziare a usare la piattaforma.'
+      : ''
+
+    contextBlock = `\n\n--- DATI DALLA PIATTAFORMA (risultati reali) ---\n${sections.join('\n\n')}\n--- FINE DATI ---\n\nIstruzioni: Usa ESCLUSIVAMENTE QUESTI dati reali per rispondere. Cita nomi, importi, date, punteggi specifici. NON inventare dati aggiuntivi. Se i risultati sono vuoti, dillo chiaramente. Se un'azione è stata eseguita (resolve_alert, update_*), conferma all'utente.${emptyWarning}`
   }
 
   return { toolResults: results, contextBlock }

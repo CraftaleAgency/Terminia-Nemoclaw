@@ -7,6 +7,7 @@ import analyzeRouter from './routes/analyze.ts'
 import osintRouter from './routes/osint.ts'
 import chatRouter from './routes/chat.ts'
 import ocrRouter from './routes/ocr.ts'
+import documentsRouter from './routes/documents.ts'
 import { chatCompletion } from './lib/inference.ts'
 
 const app = express()
@@ -85,6 +86,9 @@ app.use('/api/analyze-public', rateLimit, (req, res, next) => {
   req.body.company_id = req.body.company_id || null
   next()
 }, analyzeRouter)
+
+// ── Document upload (public for registration, rate-limited) ─────────────────
+app.use('/api/documents', rateLimit, documentsRouter)
 
 // ── Global error handler ────────────────────────────────────────────────────
 app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
