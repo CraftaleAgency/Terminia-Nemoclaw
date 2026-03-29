@@ -74,6 +74,28 @@ function extractCityFromText(text: string): string | null {
   return match?.[1]?.split(/[,\n(]/)[0]?.trim() || null
 }
 
+function extractFiscalCodeFromText(text: string): string | null {
+  const upper = text.toUpperCase()
+  const direct = upper.match(FISCAL_CODE_REGEX)?.[0]
+  if (direct) return direct
+
+  const collapsed = upper.replace(/[^A-Z0-9]/g, '')
+  const collapsedMatch = collapsed.match(/[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]/)?.[0]
+  if (collapsedMatch) return collapsedMatch
+
+  const labeled = extractLabeledValue(text, [
+    'Codice fiscale',
+    'CF',
+    'Cod. Fisc.',
+    'Codice Fiscale',
+  ])
+  if (!labeled) return null
+
+  const normalized = labeled.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const labeledMatch = normalized.match(/[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]/)?.[0]
+  return labeledMatch || null
+}
+
 function inferSectorFromText(text: string): string | null {
   const lower = text.toLowerCase()
   const sectorKeywords: [string, string][] = [
@@ -106,7 +128,7 @@ function inferSectorFromText(text: string): string | null {
 function extractRegistrationProfileFallback(text: string): RegistrationProfile {
   const cleaned = cleanExtractedText(text)
   const upper = cleaned.toUpperCase()
-  const fiscalCode = upper.match(FISCAL_CODE_REGEX)?.[0] || ''
+  const fiscalCode = extractFiscalCodeFromText(cleaned) || ''
   const vat = upper.match(VAT_LABEL_REGEX)?.[1] || upper.match(VAT_FALLBACK_REGEX)?.[0] || ''
   const companyName = extractLabeledValue(cleaned, [
     'Denominazione',
